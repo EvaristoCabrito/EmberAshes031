@@ -4487,6 +4487,17 @@ export class BattleEngine {
     this.clampCam();
   }
 
+  /** Preserve an editor preview camera while its draft mission is rebuilt. */
+  cameraPosition(): { x: number; y: number } {
+    return { x: this.camX, y: this.camY };
+  }
+
+  restoreCamera(position: { x: number; y: number }): void {
+    this.camX = position.x;
+    this.camY = position.y;
+    this.clampCam();
+  }
+
   setZoom(level: number): void {
     const next = Math.max(0, Math.min(ZOOM_RADII.length - 1, Math.round(level)));
     if (next === this.zoom) return;

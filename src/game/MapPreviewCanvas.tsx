@@ -14,6 +14,7 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
   const engineRef = useRef<BattleEngine | null>(null);
   const redrawRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; startX: number; startY: number; armed: boolean; moved: boolean } | null>(null);
+  const cameraRef = useRef<{ x: number; y: number } | null>(null);
   const armTimerRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
@@ -33,6 +34,7 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
       engine.setZoom(Math.max(1, Math.min(3, Math.round((zoom - 0.75) * 4))));
       engineRef.current = engine;
     } catch {
+    let needsCameraRestore = cameraRef.current !== null;
       return;
     }
 
@@ -47,6 +49,14 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
       canvas.style.height = `${h}px`;
       engine.render(ctx, w, h, dpr);
     };
+      if (needsCameraRestore) {
+        const savedCamera = cameraRef.current;
+        if (savedCamera) {
+          engine.restoreCamera(savedCamera);
+          engine.render(ctx, w, h, dpr);
+        }
+        needsCameraRestore = false;
+      }
 
     redrawRef.current = draw;
     draw();
@@ -55,6 +65,7 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
     return () => {
       ro.disconnect();
       if (engineRef.current === engine) engineRef.current = null;
+      cameraRef.current = engine.cameraPosition();
       if (redrawRef.current === draw) redrawRef.current = null;
     };
   }, [mission, art, onCellClick, zoom]);
