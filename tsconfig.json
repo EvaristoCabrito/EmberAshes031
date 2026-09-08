@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    // `src/lib/db.ts` imports scripts/migration-plan.mjs; checkJs types the
+    // implementation itself instead of a hand-written declaration beside it.
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "types": [
+      "vite/client",
+      "node"
+    ],
+    // No baseUrl: TypeScript deprecated it and version 6 errors on it. Since 4.1 a paths
+    // mapping resolves against the directory holding this file, so "./src/*" means the same
+    // thing it always did and nothing about "@/..." imports changes.
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "allowImportingTsExtensions": true,
+    // src/game/map-slots.json is imported directly by src/game/mapstore.ts.
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src",
+    "server"
+  ]
+}
