@@ -3251,7 +3251,7 @@ function MapEditorScreen({
         </div>
         {showPreview && (
           <ResizableEditorPanel
-            className="overflow-hidden border border-border rounded-md bg-bg/40 h-[40vh] min-h-[220px] min-w-[280px]"
+            className="overflow-hidden border border-border rounded-md bg-black h-[40vh] min-h-[220px] min-w-[280px]"
             title="Arraste esta alça para redimensionar a prévia"
             minHeight={220}
           >
@@ -3264,7 +3264,7 @@ function MapEditorScreen({
         )}
 
         <ResizableEditorPanel
-          className="overflow-auto border border-border rounded-md p-2 bg-bg/40 h-[60vh] min-h-[320px] min-w-[280px] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full"
+          className="overflow-auto border border-border rounded-md p-2 bg-black h-[60vh] min-h-[320px] min-w-[280px] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full"
           style={{ scrollbarWidth: "auto", scrollbarColor: "var(--color-border, #5a5a5a) transparent" }}
           title="Arraste esta alça para redimensionar o mapa"
           minHeight={320}

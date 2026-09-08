@@ -4896,10 +4896,10 @@ export class BattleEngine {
         dh = cssW / ir;
       }
       ctx.drawImage(backdrop, (cssW - dw) / 2, (cssH - dh) / 2, dw, dh);
-      ctx.fillStyle = "rgba(12, 11, 10, 0.42)";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
       ctx.fillRect(0, 0, cssW, cssH);
     } else {
-      ctx.fillStyle = "#0c0b0a";
+      ctx.fillStyle = "#000000";
       ctx.fillRect(0, 0, cssW, cssH);
     }
 

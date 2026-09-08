@@ -15,6 +15,8 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
   const redrawRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; startX: number; startY: number; armed: boolean; moved: boolean } | null>(null);
   const cameraRef = useRef<{ x: number; y: number } | null>(null);
+  const verticalScrollTopRef = useRef(0);
+  const verticalScrollInitializedRef = useRef(false);
   const armTimerRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
@@ -29,14 +31,14 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
     let engine: BattleEngine;
     try {
       engine = new BattleEngine(mission, art, { hp: {}, levels: {} }, 1);
-      // Keep the canvas the size of the window.  The BattleEngine owns the real
+      // Keep the canvas the size of the window. The BattleEngine owns the real
       // camera, so dragging moves the board rather than an oversized empty canvas.
       engine.setZoom(Math.max(1, Math.min(3, Math.round((zoom - 0.75) * 4))));
       engineRef.current = engine;
     } catch {
-    let needsCameraRestore = cameraRef.current !== null;
       return;
     }
+    let needsCameraRestore = cameraRef.current !== null;
 
     const draw = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -48,7 +50,6 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
       engine.render(ctx, w, h, dpr);
-    };
       if (needsCameraRestore) {
         const savedCamera = cameraRef.current;
         if (savedCamera) {
@@ -57,15 +58,25 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
         }
         needsCameraRestore = false;
       }
+    };
 
     redrawRef.current = draw;
     draw();
+    if (!verticalScrollInitializedRef.current) {
+      requestAnimationFrame(() => {
+        const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+        const centeredScroll = Math.round(maxScroll / 2);
+        verticalScrollTopRef.current = centeredScroll;
+        viewport.scrollTop = centeredScroll;
+        verticalScrollInitializedRef.current = true;
+      });
+    }
     const ro = new ResizeObserver(draw);
     ro.observe(viewport);
     return () => {
       ro.disconnect();
-      if (engineRef.current === engine) engineRef.current = null;
       cameraRef.current = engine.cameraPosition();
+      if (engineRef.current === engine) engineRef.current = null;
       if (redrawRef.current === draw) redrawRef.current = null;
     };
   }, [mission, art, onCellClick, zoom]);
@@ -139,8 +150,18 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
     setIsPanning(false);
   };
 
+  const onViewportScroll = () => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const delta = viewport.scrollTop - verticalScrollTopRef.current;
+    verticalScrollTopRef.current = viewport.scrollTop;
+    if (!delta) return;
+    engineRef.current?.panBy(0, delta);
+    redrawRef.current?.();
+  };
+
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div className="relative h-full w-full overflow-hidden bg-black">
       <div className="absolute right-2 top-2 z-10 flex overflow-hidden rounded border border-border bg-surface shadow-md">
         <button
           type="button"
@@ -177,15 +198,18 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
       </div>
       <div
         ref={viewportRef}
-        className={`h-full w-full overflow-x-hidden overflow-y-scroll [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border ${isPanning ? "cursor-grabbing" : "cursor-default"}`}
+        className={`h-full w-full bg-black overflow-x-hidden overflow-y-scroll [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border ${isPanning ? "cursor-grabbing" : "cursor-default"}`}
         style={{ scrollbarWidth: "auto", scrollbarColor: "var(--color-border, #5a5a5a) transparent", scrollbarGutter: "stable" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={(event) => endDrag(event, true)}
         onLostPointerCapture={(event) => endDrag(event, true)}
+        onScroll={onViewportScroll}
       >
-        <canvas ref={canvasRef} className="block" />
+        <div className="min-h-[300%] w-full">
+          <canvas ref={canvasRef} className="sticky top-0 block" />
+        </div>
       </div>
     </div>
   );
