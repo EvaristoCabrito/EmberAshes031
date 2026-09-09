@@ -667,4 +667,7 @@ export interface GrowthLine {
    * meaningful (nonzero) when `to === from`; a level-up resets it to 0 since the bar is now
    * tracking progress in a different level than the one `xpFrom` would describe. */
   xpFrom: number;
+  /** Extra spell uses this level-up granted (e.g. "+1 T1 · +1 T2"). Empty when the new
+   * level didn't add slots — spent charges are never refilled, only new slots land. */
+  skillGain?: string;
 }

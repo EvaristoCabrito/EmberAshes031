@@ -1,4 +1,4 @@
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, lightningDice, lightningFormula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, spellFormula, spellTier, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, lightningDice, lightningFormula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses } from "./data";
 import type { SpellTier } from "./data";
 import { canCounter, makeForecast, mulberry32, powerOf, protOf, rollDamage, rollDamageCustom } from "./combat";
 import {
@@ -942,7 +942,8 @@ export class BattleEngine {
       for (let t = 1; t <= 10; t++) {
         const key = tierKey(t as SpellTier);
         const cap = tierUses(u.classId, t as SpellTier, u.level);
-        perTier[key] = Math.max(0, cap - u.spells[key]);
+        const left = Number.isFinite(u.spells[key]) ? u.spells[key] : 0;
+        perTier[key] = Math.max(0, cap - left);
       }
       out[u.name] = perTier;
     }
@@ -1653,7 +1654,9 @@ export class BattleEngine {
     if (attacker.level >= MAX_LEVEL) attacker.xp = 0;
   }
 
-  /** Bumps a unit by one level: stat growth, the level's HP gain added to current HP (not a full heal), and any newly-unlocked tier uses granted right away. */
+  /** Bumps a unit by one level: stat growth, the level's HP gain added to current HP (not a
+   * full heal), and any newly-unlocked tier uses granted right away. Spent charges stay
+   * spent — only the extra slots this level adds land in the remaining pool. */
   private levelUpUnit(u: Unit): void {
     const from = u.level;
     const to = from + 1;
@@ -1666,14 +1669,33 @@ export class BattleEngine {
     u.def = after.def;
     u.res = after.res;
     u.hp = Math.min(u.maxHp, u.hp + (after.hp - before.hp));
-    for (let t = 1; t <= 10; t++) {
-      const tier = t as SpellTier;
-      const key = tierKey(tier);
-      const gain = tierUses(u.classId, tier, to) - tierUses(u.classId, tier, from);
-      if (gain > 0) u.spells[key] += gain;
+    this.reapplyGear(u);
+    const nextSpells = { ...u.spells };
+    const gains = spellUseGains(u.classId, from, to);
+    for (const g of gains) {
+      const have = Number.isFinite(nextSpells[g.key]) ? nextSpells[g.key] : 0;
+      const cap = tierUses(u.classId, g.tier, to);
+      nextSpells[g.key] = Math.min(cap, have + g.gain);
     }
-    this.tip = `${u.name} subiu para o nível ${to}!`;
-    this.pushLog(`${u.name} subiu para o nível ${to}!`);
+    u.spells = nextSpells;
+    const extra = formatSpellUseGains(gains);
+    this.tip = extra ? `${u.name} subiu para o nível ${to} · ${extra}` : `${u.name} subiu para o nível ${to}!`;
+    this.pushLog(this.tip);
+    if (extra) {
+      this.emitParticle({
+        x: u.drawX,
+        y: u.drawY - 0.55,
+        vx: 0,
+        vy: -0.18,
+        life: 0,
+        max: 1.8,
+        size: 1,
+        color: "#e8d48a",
+        text: extra,
+        kind: "text",
+        frame: 0,
+      });
+    }
     this.emitLevelUpFx(u, to);
     sfxPlay.levelUp();
   }

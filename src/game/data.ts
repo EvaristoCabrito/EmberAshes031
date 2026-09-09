@@ -2224,6 +2224,24 @@ export function tierUses(classId: ClassId, tier: SpellTier, level: number): numb
   return Math.max(0, Math.min(5, Math.floor(level / step) - tier + 2));
 }
 
+/** Extra spell uses unlocked by going from `fromLevel` to `toLevel` (inclusive of the jump).
+ * Level-up grants exactly this delta — never a full rest of spent charges. */
+export function spellUseGains(classId: ClassId, fromLevel: number, toLevel: number): { tier: SpellTier; key: TierKey; gain: number }[] {
+  if (toLevel <= fromLevel) return [];
+  const out: { tier: SpellTier; key: TierKey; gain: number }[] = [];
+  for (let t = 1; t <= 10; t++) {
+    const tier = t as SpellTier;
+    const gain = tierUses(classId, tier, toLevel) - tierUses(classId, tier, fromLevel);
+    if (gain > 0) out.push({ tier, key: tierKey(tier), gain });
+  }
+  return out;
+}
+
+export function formatSpellUseGains(gains: { tier: SpellTier; gain: number }[]): string {
+  if (gains.length === 0) return "";
+  return gains.map((g) => `+${g.gain} T${g.tier}`).join(" · ");
+}
+
 export const SPELL_TIER: Partial<Record<SpellKind, SpellTier>> = {
   magicMissile: 1,
   longShot: 1,
