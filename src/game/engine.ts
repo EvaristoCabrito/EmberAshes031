@@ -1,4 +1,4 @@
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, lightningDice, lightningFormula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, spellFormula, spellTier, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, lightningDice, lightningFormula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, spellFormula, spellTier, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses } from "./data";
 import type { SpellTier } from "./data";
 import { canCounter, makeForecast, mulberry32, powerOf, protOf, rollDamage, rollDamageCustom } from "./combat";
 import {
@@ -712,8 +712,8 @@ export class BattleEngine {
         if (x >= 0 && x < this.cols && y >= 0 && y < this.rows && this.tiles[index] === "highruin") this.tiles[index] = houseFloor;
       }
     }
-    // A decoration that names a tile (barricade, rocks) stamps that terrain so the
-    // picture and the rules cannot disagree. A prop with no tile — chest, tree, fallen log —
+    // A decoration that names a tile (barricade, locked chest, rocks) stamps that terrain so
+    // the picture and the rules cannot disagree. A prop with no tile — tree, fallen log —
     // sits on whatever hex was already painted. The old fallback to "column" is what made
     // trunks show up as marble pillars in playtest.
     for (const p of this.decorations) {
@@ -1446,6 +1446,7 @@ export class BattleEngine {
           if (a.weaponBonusDice > 0) dmg += rollDice(a.weaponBonusDice, a.weaponBonusFaces, a.weaponBonusBonus, this.rng);
         }
         if (a.dmgMul > 1) dmg = Math.max(1, dmg * a.dmgMul);
+        if (a.spellKind === "cleave" && cleaveDoublesVs(foe)) dmg = Math.max(1, dmg * CLEAVE.largeMul);
         if (foe.asleep) {
           dmg = Math.max(1, Math.round(dmg * (1 + WEB_OF_DREAMS.sleepBonusDamage)));
           foe.asleep = false;
@@ -1486,7 +1487,10 @@ export class BattleEngine {
         }
         const meleeSkill = a.spellKind === "doubleStrike" || a.spellKind === "cleave" || a.spellKind === "piercingThrust" || a.spellKind === "sweep" || a.spellKind === "trip" || a.spellKind === "shoulderSmash" || a.spellKind === "stampede";
         this.spawnHit(foe, dmg, crit, meleeSkill);
-        this.pushLog(`${att.name} atingiu ${foe.name} com magia: ${dmg} dano${crit ? " (crítico)" : ""}`);
+        const large = a.spellKind === "cleave" && cleaveDoublesVs(foe);
+        this.pushLog(
+          `${att.name} atingiu ${foe.name} com magia: ${dmg} dano${crit ? " (crítico)" : ""}${large ? " · Cleave x2 criatura grande" : ""}`,
+        );
         if (foe.hp <= 0) {
           this.markDead(foe);
         } else {
@@ -2482,7 +2486,7 @@ export class BattleEngine {
     this.spellArmed = false;
     this.spellAim = null;
     this.hover = null;
-    this.tip = `${CLEAVE.name}: ${CLEAVE.hexes} hexes adjacentes, ${cleaveFormula(u.level)}. Toque num hex vizinho.`;
+    this.tip = `${CLEAVE.name}: ${CLEAVE.hexes} hexes adjacentes, ${cleaveFormula(u.level)}. x${CLEAVE.largeMul} em criaturas de ${CLEAVE.largeHexes}+ hexes. Toque num hex vizinho.`;
     sfxPlay.ui();
   }
 
@@ -3709,12 +3713,17 @@ export class BattleEngine {
     return this.tiles.includes("nave") ? "nave" : "plains";
   }
 
-  /** First adjacent locked chest/door around a unit's own tile, or null if none. */
+  /** First adjacent locked chest/door around a unit's own tile, or null if none.
+   *
+   * A hand-placed locked-chest prop stamps "chest" terrain (DECORATIONS.locked-chest.tile),
+   * same as a layout "k". The decoration check is the fallback for a map that still has
+   * the prop but never painted the hex — both are loot boxes and both spend a Gazua. */
   private adjacentLock(u: Unit): Point | null {
     for (const p of hexNeighbors(u.x, u.y)) {
       if (!inBounds(p.x, p.y, this.cols, this.rows)) continue;
       const t = tileAt(this.tiles, this.cols, p.x, p.y);
       if (t === "chest" || t === "door") return p;
+      if (this.decorations.some((d) => d.id === "locked-chest" && d.x === p.x && d.y === p.y)) return p;
     }
     return null;
   }
@@ -3827,7 +3836,9 @@ export class BattleEngine {
     const target = this.adjacentLock(u);
     if (!target) return;
     const i = target.y * this.cols + target.x;
-    const wasChest = this.tiles[i] === "chest";
+    const wasChest =
+      this.tiles[i] === "chest" ||
+      this.decorations.some((dec) => dec.id === "locked-chest" && dec.x === target.x && dec.y === target.y);
     this.tiles[i] = this.visualFloorAt(target.x, target.y);
     // decorations is readonly (the renderer holds the same array), so drop the chest's
     // decoration in place rather than rebinding the field.

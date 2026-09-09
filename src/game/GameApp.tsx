@@ -1488,7 +1488,7 @@ const SKILL_DAMAGE_ROWS: { name: string; cls: ClassId; tier: SpellTier; formula:
     tier: spellTier("cleave")!,
     formula: (level: number) => cleaveFormula(level),
     param: "level" as const,
-    note: `Atinge até ${CLEAVE.hexes} hexes. Dado sobe nos níveis 9, 11 e 14.`,
+    note: `Atinge até ${CLEAVE.hexes} hexes. x${CLEAVE.largeMul} em criaturas grandes (${CLEAVE.largeHexes}+ hexes). Dado sobe nos níveis 9, 11 e 14.`,
   },
   { name: SWEEP.name, cls: SKILL_CLASS.sweep!, tier: spellTier("sweep")!, formula: "dano de arma", note: `Todos os inimigos adjacentes; empurra ${SWEEP.knockback} hex.` },
   {
@@ -5050,7 +5050,7 @@ function StatusPanel({ unit, bagIcon, onClose, onOpenInventory, onOpenEquipment 
                       <div className="flex items-center gap-1.5 bg-bg border border-border rounded-md px-2 py-1.5">
                         <img src="/game/icons/cleave-crossed-blades.png?v=ds2" alt="" className="size-5 rounded-sm object-cover shrink-0" />
                         <p className="text-xs truncate">
-                          {CLEAVE.name} {CLEAVE.hexes} hex, {cleaveFormula(unit.level)}{" "}
+                          {CLEAVE.name} {CLEAVE.hexes} hex, {cleaveFormula(unit.level)} · x{CLEAVE.largeMul} vs 3+ hex{" "}
                           <span className="tabular-nums text-muted">×{unit.spells[tierKey(spellTier("cleave")!)]}</span>
                         </p>
                       </div>

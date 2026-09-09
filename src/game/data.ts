@@ -96,7 +96,7 @@ export const DECORATIONS: Record<string, DecorationDef> = {
   gatehouse: { id: "gatehouse", name: "Portão Fortificado", footprint: DECO_PAIR },
   watchtower: { id: "watchtower", name: "Torre de Vigia", footprint: DECO_PAIR },
   "ancient-shrine": { id: "ancient-shrine", name: "Santuário Antigo", footprint: DECO_PAIR },
-  "locked-chest": { id: "locked-chest", name: "Baú trancado", footprint: DECO_ONE },
+  "locked-chest": { id: "locked-chest", name: "Baú trancado", footprint: DECO_ONE, tile: "chest" },
   // A prop, not a hex type: it lays "barricade" terrain under itself and every barricade
   // rule rides on that tile — impassable except to a troll (at cost 2, which also smashes
   // it), blocks shots, and lets whoever stands right behind it shoot over while staying
@@ -1185,6 +1185,9 @@ const HEAL_TRIO: ClassId[] = ["healer", "bishop", "cleric"];
 const WARRIOR_TRIO: ClassId[] = ["swordsman", "paladin", "heavyKnight"];
 const ARCHER_TRIO: ClassId[] = ["archer", "ranger", "assassin"];
 const LANCER_TRIO: ClassId[] = ["lancer", "sentinel", "templar"];
+// Light armor: scouts, the warrior line, the lancer line, and the rogue. Front-liners
+// still wear mail/plate — leather is the lighter option (often +mov), not a scout exclusive.
+const LEATHER_WEARERS: ClassId[] = [...ARCHER_TRIO, ...WARRIOR_TRIO, ...LANCER_TRIO, "rogue"];
 
 export const WEAPONS: Record<string, WeaponDef> = {
   // Mago Negro / Elementalista / Bruxo — cajados arcanos, pool compartilhado (any of the
@@ -1372,9 +1375,9 @@ export const EQUIPMENT: Record<string, EquipmentDef> = {
   "full-helm": { id: "full-helm", name: "Elmo Completo Gótico", slot: "head", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 4, price: 210 },
   "worn-woolen-hood": { id: "worn-woolen-hood", name: "Capuz de Lã Gasto", slot: "head", usableBy: [...ARCANE_ALL, ...ARCHER_TRIO], res: 1, price: 35 },
 
-  // ---- chest: cloth for casters, leather for scouts/rogues, chain for clerics, plate for
-  // the frontline — same material camps as every other slot, now with somewhere to wear it.
-  "leather-steel-cuirass": { id: "leather-steel-cuirass", name: "Couraça de Couro e Aço", slot: "chest", usableBy: [...ARCHER_TRIO, "rogue"], def: 2, mov: 1, price: 140 },
+  // ---- chest: cloth for casters, leather for scouts/rogues/warriors, chain for clerics, plate for
+  // the frontline — warriors sit in both leather and plate so they can pick mobility or bulk.
+  "leather-steel-cuirass": { id: "leather-steel-cuirass", name: "Couraça de Couro e Aço", slot: "chest", usableBy: LEATHER_WEARERS, def: 2, mov: 1, price: 140 },
   "chainmail-hauberk": { id: "chainmail-hauberk", name: "Cota de Malha", slot: "chest", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO, ...HEAL_TRIO], def: 2, price: 150 },
   "heavy-brigandine": { id: "heavy-brigandine", name: "Brigantina Pesada", slot: "chest", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 3, price: 200 },
   "scale-armor": { id: "scale-armor", name: "Armadura Escamada Medieval", slot: "chest", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 3, res: 1, price: 220 },
@@ -1384,8 +1387,8 @@ export const EQUIPMENT: Record<string, EquipmentDef> = {
   "dark-scale-cuirass": { id: "dark-scale-cuirass", name: "Couraça Escamada Sombria", slot: "chest", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 4, res: 1, price: 300 },
   "brutal-knight-cuirass": { id: "brutal-knight-cuirass", name: "Couraça Brutal de Cavaleiro Pesado", slot: "chest", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 5, price: 340 },
 
-  // ---- shoulders (pauldrons/mantles — leather for the archer line, steel for the frontline)
-  "leather-shoulder-guards": { id: "leather-shoulder-guards", name: "Protetores de Ombro de Couro", slot: "shoulders", usableBy: [...ARCHER_TRIO, "rogue"], def: 1, mov: 1, price: 90 },
+  // ---- shoulders (pauldrons/mantles — leather for scouts/warriors, steel for the frontline)
+  "leather-shoulder-guards": { id: "leather-shoulder-guards", name: "Protetores de Ombro de Couro", slot: "shoulders", usableBy: LEATHER_WEARERS, def: 1, mov: 1, price: 90 },
   "chainmail-mantle": { id: "chainmail-mantle", name: "Manto de Malha", slot: "shoulders", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO, ...HEAL_TRIO], def: 1, res: 1, price: 120 },
   "armored-shoulder-mantle": { id: "armored-shoulder-mantle", name: "Manto de Ombro Blindado", slot: "shoulders", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 2, price: 150 },
   "massive-pauldrons": { id: "massive-pauldrons", name: "Ombreiras Maciças", slot: "shoulders", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 2, price: 150 },
@@ -1393,17 +1396,17 @@ export const EQUIPMENT: Record<string, EquipmentDef> = {
   "gothic-shoulder-plates": { id: "gothic-shoulder-plates", name: "Placas de Ombro Góticas", slot: "shoulders", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 3, price: 210 },
   "gothic-pauldrons-exceptional": { id: "gothic-pauldrons-exceptional", name: "Ombreiras Góticas Excepcionais", slot: "shoulders", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 3, price: 230 },
 
-  // ---- legs: leather for the archer line, steel/mail for the frontline — same two
+  // ---- legs: leather for scouts/warriors, steel/mail for the frontline — same two
   // material camps as head gear, no caster-tier leg armor exists yet.
-  "studded-leather-pants": { id: "studded-leather-pants", name: "Calças de Couro Cravejado", slot: "legs", usableBy: ARCHER_TRIO, def: 1, mov: 1, price: 60 },
+  "studded-leather-pants": { id: "studded-leather-pants", name: "Calças de Couro Cravejado", slot: "legs", usableBy: LEATHER_WEARERS, def: 1, mov: 1, price: 60 },
   "chainmail-leggings": { id: "chainmail-leggings", name: "Grevas de Malha", slot: "legs", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 2, price: 110 },
   "plate-greaves": { id: "plate-greaves", name: "Grevas de Placas", slot: "legs", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 3, price: 170 },
   "plate-legs": { id: "plate-legs", name: "Perneiras de Placas Completas", slot: "legs", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 4, mov: -1, price: 230 },
 
-  // ---- feet: same material split
-  "worn-leather-boots": { id: "worn-leather-boots", name: "Botas de Couro Gastas", slot: "feet", usableBy: ARCHER_TRIO, mov: 1, price: 35 },
-  "worn-mud-boots": { id: "worn-mud-boots", name: "Botas Enlameadas", slot: "feet", usableBy: ARCHER_TRIO, def: 1, price: 45 },
-  "buckled-leather-boots": { id: "buckled-leather-boots", name: "Botas de Fivela", slot: "feet", usableBy: ARCHER_TRIO, def: 1, mov: 1, price: 70 },
+  // ---- feet: same material split — leather boots are the light option (scouts + warriors)
+  "worn-leather-boots": { id: "worn-leather-boots", name: "Botas de Couro Gastas", slot: "feet", usableBy: LEATHER_WEARERS, mov: 1, price: 35 },
+  "worn-mud-boots": { id: "worn-mud-boots", name: "Botas Enlameadas", slot: "feet", usableBy: LEATHER_WEARERS, def: 1, price: 45 },
+  "buckled-leather-boots": { id: "buckled-leather-boots", name: "Botas de Fivela", slot: "feet", usableBy: LEATHER_WEARERS, def: 1, mov: 1, price: 70 },
   "steel-sabatons": { id: "steel-sabatons", name: "Solerets de Aço", slot: "feet", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 2, price: 110 },
 
   // ---- hands: all gauntlets, all warrior-type gear (no archer-line hand armor yet) — and,
@@ -1421,7 +1424,7 @@ export const EQUIPMENT: Record<string, EquipmentDef> = {
   // ---- back (cloaks — cloth for casters/scouts, armored mantles for the frontline)
   "ornamental-cloak-clasp": { id: "ornamental-cloak-clasp", name: "Fivela de Capa Ornamentada", slot: "back", mov: 1, res: 1, price: 90 },
   "travelers-cloak": { id: "travelers-cloak", name: "Capa de Viajante", slot: "back", usableBy: [...ARCANE_ALL, ...ARCHER_TRIO], res: 1, price: 60 },
-  "leather-cape": { id: "leather-cape", name: "Capa Curta de Couro", slot: "back", usableBy: [...ARCHER_TRIO, "rogue"], res: 1, price: 70 },
+  "leather-cape": { id: "leather-cape", name: "Capa Curta de Couro", slot: "back", usableBy: LEATHER_WEARERS, res: 1, price: 70 },
   "wine-cloak": { id: "wine-cloak", name: "Capa Tingida de Vinho", slot: "back", usableBy: [...ARCANE_ALL, ...ARCHER_TRIO], res: 1, mov: 1, price: 80 },
   "tattered-war-cloak": { id: "tattered-war-cloak", name: "Capa de Guerra Esfarrapada", slot: "back", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 1, res: 1, price: 110 },
   "noble-war-cloak": { id: "noble-war-cloak", name: "Capa Nobre de Guerra Esfarrapada", slot: "back", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 1, atk: 1, price: 180 },
@@ -1444,7 +1447,7 @@ export const EQUIPMENT: Record<string, EquipmentDef> = {
   "heavy-metal-pendant": { id: "heavy-metal-pendant", name: "Pingente de Metal Pesado", slot: "neck", def: 1, res: 1, price: 100 },
   "silver-necklace": { id: "silver-necklace", name: "Colar de Prata Simples", slot: "neck", res: 1, price: 55 },
   "runic-amulet": { id: "runic-amulet", name: "Amuleto Rúnico", slot: "neck", mag: 1, price: 65 },
-  "leather-gorget": { id: "leather-gorget", name: "Goguete de Couro Pesado", slot: "neck", usableBy: [...ARCHER_TRIO, ...WARRIOR_TRIO, "rogue"], def: 1, price: 70 },
+  "leather-gorget": { id: "leather-gorget", name: "Goguete de Couro Pesado", slot: "neck", usableBy: LEATHER_WEARERS, def: 1, price: 70 },
   "iron-talisman": { id: "iron-talisman", name: "Talismã de Ferro Pesado", slot: "neck", def: 1, price: 95 },
   "steel-gorget": { id: "steel-gorget", name: "Goguete de Aço Medieval", slot: "neck", usableBy: [...WARRIOR_TRIO, ...LANCER_TRIO], def: 2, price: 110 },
   "ornate-pendant": { id: "ornate-pendant", name: "Pingente Medieval Ornamentado", slot: "neck", res: 1, mag: 1, price: 130 },
@@ -1764,7 +1767,21 @@ export function doubleStrikeFormula(level: number): string {
 export const CLEAVE = {
   name: "Cleave",
   hexes: 3,
+  /** Footprint size (hexes occupied) at which Cleave deals `largeMul` damage.
+   * Tipo 3 (cão de guerra) and every bigger brute (troll, horror, Asherah, …). */
+  largeHexes: 3,
+  largeMul: 2,
 };
+
+/** How many hexes a unit actually occupies — Cleave's "large creature" check. */
+export function occupiedHexCount(unit: { footprintOffsets?: { dx: number; dy: number }[]; size?: number }): number {
+  if (unit.footprintOffsets && unit.footprintOffsets.length > 0) return unit.footprintOffsets.length;
+  return Math.max(1, unit.size ?? 1);
+}
+
+export function cleaveDoublesVs(unit: { footprintOffsets?: { dx: number; dy: number }[]; size?: number }): boolean {
+  return occupiedHexCount(unit) >= CLEAVE.largeHexes;
+}
 
 /** Cleave's bonus die, always added on top of plain weapon damage — explicit level
  * breakpoints, same shape as Long Shot/Lightning/Fireball. */
@@ -3353,14 +3370,21 @@ function decorateOpenTerrain(mission: Mission): Mission {
   const spawnSet = new Set([...playerSpawns, ...enemySpawns].map(([x, y]) => `${x},${y}`));
   const floorChar = mission.layout.some((row) => row.includes("n")) ? "n" : ".";
   const blockedExtra = new Set<string>();
-  const hasAuthoredChest = mission.layout.some((row) => row.includes("k"));
+  // Hand-placed locked-chest props count as authored loot boxes too — they stamp "chest"
+  // terrain (see DECORATIONS.locked-chest.tile), same as a layout "k". Skip the random
+  // sprinkle so a mapper's own chests are the ones that stay.
+  const hasAuthoredChest =
+    mission.layout.some((row) => row.includes("k")) ||
+    (mission.decorations ?? []).some((d) => d.id === "locked-chest");
   if (!hasAuthoredChest) {
     placeChests(grid, cols, rows, playerSpawns, enemySpawns, spawnSet, blockedExtra, seedFromId(mission.id), floorChar);
   }
   const decorations: DecorationPlacement[] = [...(mission.decorations ?? [])];
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      if (grid[y]![x] === "k") decorations.push({ id: "locked-chest", x, y });
+      if (grid[y]![x] !== "k") continue;
+      if (decorations.some((d) => d.id === "locked-chest" && d.x === x && d.y === y)) continue;
+      decorations.push({ id: "locked-chest", x, y });
     }
   }
   return {
@@ -3428,7 +3452,7 @@ export function scatterDecor(m: Mission, excludeIds?: ReadonlySet<string>): Miss
   // The Map Editor lets the author opt specific props out of this pool (per direct
   // instruction) — a piece that's too distinctive to see scattered at random, without
   // pulling it out of DECORATIONS entirely and losing manual placement too.
-  const ids = Object.keys(DECORATIONS).filter((id) => !excludeIds?.has(id));
+  const ids = Object.keys(DECORATIONS).filter((id) => id !== "locked-chest" && !excludeIds?.has(id));
   // Uncapped and generous: scenery is the thing a board should have lots of, and anything
   // unwanted is a click to clear.
   const want = Math.max(3, Math.round(((m.cols * m.rows) / 288) * 10));
