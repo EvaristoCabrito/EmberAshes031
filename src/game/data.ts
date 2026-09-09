@@ -88,14 +88,9 @@ export const DECORATIONS: Record<string, DecorationDef> = {
   "ruined-chapel": { id: "ruined-chapel", name: "Capela em Ruínas", footprint: DECO_PAIR },
   "abandoned-mansion": { id: "abandoned-mansion", name: "Mansão Abandonada", footprint: DECO_TRIO },
   "stone-bridge": { id: "stone-bridge", name: "Ponte de Pedra", footprint: DECO_PAIR },
-  // Repeatable, static modules for the two outer edges of a bridge map.
-  "bridge-parapet-lower-001": { id: "bridge-parapet-lower-001", name: "Parapeito da Ponte — Baixo", footprint: DECO_PAIR },
-  "bridge-parapet-upper-001": { id: "bridge-parapet-upper-001", name: "Parapeito da Ponte — Cima", footprint: DECO_PAIR },
-  "exhibition-cages-001": { id: "exhibition-cages-001", name: "Gaiolas de Exposição", footprint: DECO_PAIR },
-  "exhibition-cages-002": { id: "exhibition-cages-002", name: "Gaiolas de Exposição II", footprint: DECO_PAIR },
-  "exhibition-cages-003": { id: "exhibition-cages-003", name: "Gaiolas de Exposição III", footprint: DECO_PAIR },
-  "exhibition-cages-004": { id: "exhibition-cages-004", name: "Gaiolas de Exposição IV", footprint: DECO_PAIR },
-  "exhibition-cages-005": { id: "exhibition-cages-005", name: "Gaiolas de Exposição V", footprint: DECO_PAIR },
+  // Long, repeatable transparent modules for the two outer edges of a bridge map.
+  "bridge-parapet-gothic-statues-001": { id: "bridge-parapet-gothic-statues-001", name: "Parapeito Gótico — Estátuas", footprint: DECO_QUAD },
+  "bridge-parapet-gothic-wall-001": { id: "bridge-parapet-gothic-wall-001", name: "Parapeito Gótico — Muralha", footprint: DECO_QUAD },
   "ember-channels-001": { id: "ember-channels-001", name: "Canais de Brasa", footprint: DECO_PAIR },
   "broken-wall-segment": { id: "broken-wall-segment", name: "Muralha em Ruínas", footprint: DECO_PAIR, tile: "column" },
   gatehouse: { id: "gatehouse", name: "Portão Fortificado", footprint: DECO_PAIR },
@@ -184,9 +179,7 @@ export function decorationFacing(id: string, rot: number, has: (file: string) =>
 /** Source generations remain intact. These recent decorations render their non-destructive
  * alpha-clean siblings, so the baked white checkerboard never reaches the game canvas. */
 const DECORATION_ALPHA_CLEAN = new Set([
-  "bridge-parapet-lower-001", "bridge-parapet-upper-001", "ember-channels-001",
-  "exhibition-cages-001", "exhibition-cages-002", "exhibition-cages-003",
-  "exhibition-cages-004", "exhibition-cages-005",
+  "ember-channels-001",
 ]);
 
 export function decorationImage(id: string): string {

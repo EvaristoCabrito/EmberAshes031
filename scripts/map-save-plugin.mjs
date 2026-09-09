@@ -23,6 +23,9 @@ export const SLOTS_SAVE_ROUTE = "/__map-slots";
 /** Sets the play order of the missions at each location — see src/game/map-order.json. */
 export const ORDER_SAVE_ROUTE = "/__map-order";
 
+/** Sets the campaign progression order of the world-map locations. */
+export const LOCATION_ORDER_SAVE_ROUTE = "/__location-order";
+
 /** Where saved maps live, relative to the project root. */
 export const MAPS_DIR = join("src", "game", "maps");
 
@@ -32,6 +35,9 @@ export const SLOTS_FILE = join("src", "game", "map-slots.json");
 
 /** Per-location mission order, same config-not-a-version treatment as the slot counts. */
 export const ORDER_FILE = join("src", "game", "map-order.json");
+
+/** Ordered location ids, separate from the per-location mission lists. */
+export const LOCATION_ORDER_FILE = join("src", "game", "location-order.json");
 
 /** Deletes one saved map file — the editor's way to throw away a version it created.
  * Saves only ever stack up, so without this the folder is write-only. */
@@ -121,15 +127,17 @@ export function mapSavePlugin() {
       const dir = join(server.config.root, MAPS_DIR);
       const slotsPath = join(server.config.root, SLOTS_FILE);
       const orderPath = join(server.config.root, ORDER_FILE);
+      const locationOrderPath = join(server.config.root, LOCATION_ORDER_FILE);
       server.middlewares.use((req, res, next) => {
         const pathOnly = (req.url ?? "").split("?", 1)[0];
         const isMap = pathOnly === MAP_SAVE_ROUTE;
         const isSlots = pathOnly === SLOTS_SAVE_ROUTE;
         const isOrder = pathOnly === ORDER_SAVE_ROUTE;
+        const isLocationOrder = pathOnly === LOCATION_ORDER_SAVE_ROUTE;
         const isDelete = pathOnly === MAP_DELETE_ROUTE;
         const isList = pathOnly === MAP_LIST_ROUTE;
         const method = (req.method ?? "GET").toUpperCase();
-        if ((!isMap && !isSlots && !isOrder && !isDelete && !isList) || (isList ? method !== "GET" : method !== "POST")) {
+        if ((!isMap && !isSlots && !isOrder && !isLocationOrder && !isDelete && !isList) || (isList ? method !== "GET" : method !== "POST")) {
           next();
           return;
         }
@@ -168,6 +176,13 @@ export function mapSavePlugin() {
         }
         readBody(req, 8 * 1024 * 1024)
           .then((raw) => {
+            if (isLocationOrder) {
+              const wanted = JSON.parse(raw);
+              const cleaned = [...new Set(Array.isArray(wanted) ? wanted.filter((id) => isSafeMapId(id)) : [])];
+              writeFileSync(locationOrderPath, JSON.stringify(cleaned, null, 2) + "\n", "utf8");
+              reply(200, { ok: true, file: LOCATION_ORDER_FILE, order: cleaned, onDisk: readBack(locationOrderPath) });
+              return;
+            }
             if (isOrder) {
               const wanted = JSON.parse(raw);
               const cleaned = {};

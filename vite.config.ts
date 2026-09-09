@@ -161,7 +161,7 @@ export default defineConfig(({ command, isPreview }) => ({
     strictPort: true,
     // Editor saves are handled by mapSavePlugin. If Vite watches their JSON files it
     // reloads the whole game, dumping the author at the title screen mid-edit.
-    watch: { ignored: ["**/src/game/maps/*.json", "**/src/game/map-order.json", "**/src/game/map-slots.json"] },
+    watch: { ignored: ["**/src/game/maps/*.json", "**/src/game/map-order.json", "**/src/game/location-order.json", "**/src/game/map-slots.json"] },
   },
   preview: {
     host: "127.0.0.1",

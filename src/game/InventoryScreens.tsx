@@ -20,6 +20,7 @@ export function PaperDollScreen({
   onSwitchToBackpack,
   onEquipWeapon,
   onEquipItem,
+  embedded = false,
 }: {
   heroName: string;
   classId: ClassId;
@@ -28,23 +29,24 @@ export function PaperDollScreen({
   onSwitchToBackpack?: () => void;
   onEquipWeapon?: (hero: string, weaponId: string) => void;
   onEquipItem?: (hero: string, slot: EquipSlot, itemId: string) => void;
+  embedded?: boolean;
 }) {
   const [picker, setPicker] = useState<"mainHand" | EquipSlot | null>(null);
   const weaponId = save.equipped[heroName];
   const weapon = weaponId ? WEAPONS[weaponId] : null;
   const enh = weaponId ? (save.weapons[weaponId] ?? 0) : 0;
   const equip = save.equipment[heroName] ?? {};
-
+  const wearerOf = (itemId: string) => Object.entries(save.equipment).find(([, slots]) => Object.values(slots).includes(itemId))?.[0];
   const ownedWeapons = [...weaponsForClass(classId)].filter((w) => save.weapons[w.id] != null).sort((a, b) => weaponPower(a) - weaponPower(b));
 
   return (
     <div
-      className="absolute inset-0 z-40 bg-bg/85 flex items-center justify-center p-4"
+      className={embedded ? "relative z-0 h-full min-w-0 overflow-hidden" : "absolute inset-0 z-40 flex items-center justify-center bg-bg/85 p-4"}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (!embedded && e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-md max-h-[88dvh] overflow-y-auto bg-surface border border-border rounded-xl p-5">
+      <div className={embedded ? "h-full min-h-0 w-full ember-scrollbar overflow-y-auto overflow-x-hidden rounded-xl border border-border bg-surface p-4" : "w-full max-w-md max-h-[88dvh] overflow-y-auto bg-surface border border-border rounded-xl p-5"}>
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
             <p className="font-display text-xl leading-tight">{heroName}</p>
@@ -182,13 +184,14 @@ export function PaperDollScreen({
                 // finger slot can wear any of them.
                 const slotKey = picker === "ring2" ? "ring1" : picker;
                 const options = Object.values(EQUIPMENT).filter(
-                  (it) => it.slot === slotKey && (save.looseEquipment[it.id] ?? 0) > 0 && (!it.usableBy || it.usableBy.includes(classId)),
+                  (it) => it.slot === slotKey && ((save.looseEquipment[it.id] ?? 0) > 0 || !!wearerOf(it.id)) && (!it.usableBy || it.usableBy.includes(classId)),
                 );
                 return options.length > 0 ? (
                   <div className="flex flex-col gap-1.5">
                     {options.map((it) => {
                       const equipped = equip[picker as EquipSlot] === it.id;
                       const owned = save.looseEquipment[it.id] ?? 0;
+                      const wearer = wearerOf(it.id);
                       return (
                         <button
                           key={it.id}
@@ -212,6 +215,7 @@ export function PaperDollScreen({
                             </span>
                           </span>
                           {equipped && <span className="text-[11px] text-muted shrink-0">Equipado</span>}
+                          {!equipped && wearer && <span className="text-[11px] text-muted shrink-0">em {wearer}</span>}
                         </button>
                       );
                     })}
@@ -234,11 +238,13 @@ export function BackpackScreen({
   save,
   onClose,
   onSwitchToDoll,
+  embedded = false,
 }: {
   heroName: string;
   save: SaveData;
   onClose: () => void;
   onSwitchToDoll?: () => void;
+  embedded?: boolean;
 }) {
   const bag = save.bags[heroName] ?? EMPTY_BAG;
   // Only counts potions toward pouch capacity — lockpicks are tracked separately (see the
@@ -252,19 +258,28 @@ export function BackpackScreen({
   });
   const wearerOf = (id: string) =>
     Object.entries(save.equipment).find(([, slots]) => Object.values(slots).includes(id))?.[0];
-  const equipmentEntries = Object.entries(save.looseEquipment).filter(([id]) => {
-    const wearer = wearerOf(id);
-    return !wearer || heroRecruited(wearer, save.completed);
-  });
+  const sharedEquipmentIds = new Set([
+    ...Object.keys(save.looseEquipment),
+    ...Object.values(save.equipment).flatMap((slots) => Object.values(slots)),
+  ]);
+  const equipmentEntries = [...sharedEquipmentIds]
+    .map((id) => [
+      id,
+      (save.looseEquipment[id] ?? 0) + Object.values(save.equipment).reduce((total, slots) => total + Object.values(slots).filter((equippedId) => equippedId === id).length, 0),
+    ] as const)
+    .filter(([id]) => {
+      const wearer = wearerOf(id);
+      return !wearer || heroRecruited(wearer, save.completed);
+    });
 
   return (
     <div
-      className="absolute inset-0 z-40 bg-bg/85 flex items-center justify-center p-4"
+      className={embedded ? "relative z-0 h-full min-w-0 overflow-hidden" : "absolute inset-0 z-40 flex items-center justify-center bg-bg/85 p-4"}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (!embedded && e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative w-full max-w-md max-h-[88dvh] overflow-y-auto border border-border rounded-xl p-5">
+      <div className={embedded ? "relative h-full min-h-0 w-full ember-scrollbar overflow-y-auto overflow-x-hidden rounded-xl border border-border p-4" : "relative w-full max-w-md max-h-[88dvh] overflow-y-auto border border-border rounded-xl p-5"}>
         <img src="/game/assets/backpack-bg.jpg" alt="" className="absolute inset-0 h-full w-full object-cover rounded-xl blur-[5px] scale-110 -z-10" />
         <div className="absolute inset-0 bg-bg/55 rounded-xl -z-10" />
         <div className="flex items-start justify-between gap-3 mb-4">
@@ -354,6 +369,47 @@ export function BackpackScreen({
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** One inventory action opens the hero's personal consumables beside the party's equipment
+ * sheet. The grid never exceeds its container; narrow screens stack vertically instead of
+ * producing a horizontal scrollbar. */
+export function PartyInventoryOverlay({
+  heroName,
+  classId,
+  save,
+  onClose,
+  onEquipWeapon,
+  onEquipItem,
+}: {
+  heroName: string;
+  classId: ClassId;
+  save: SaveData;
+  onClose: () => void;
+  onEquipWeapon?: (hero: string, weaponId: string) => void;
+  onEquipItem?: (hero: string, slot: EquipSlot, itemId: string) => void;
+}) {
+  return (
+    <div
+      className="absolute inset-0 z-40 grid place-items-center bg-bg/85 p-3 sm:p-4"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="grid h-[min(88dvh,48rem)] w-full max-w-6xl min-w-0 grid-cols-1 gap-3 overflow-x-hidden overflow-y-auto lg:grid-cols-2 lg:overflow-y-hidden">
+        <BackpackScreen heroName={heroName} save={save} onClose={onClose} embedded />
+        <PaperDollScreen
+          heroName={heroName}
+          classId={classId}
+          save={save}
+          onClose={onClose}
+          onEquipWeapon={onEquipWeapon}
+          onEquipItem={onEquipItem}
+          embedded
+        />
       </div>
     </div>
   );

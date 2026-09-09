@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BAG_MAX, CLASSES, HERO_NAMES, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, WEAPON_MAX_ENH, WEAPONS, heroRecruited, partyPouchId, pouchIcon, weaponDiceLabel, weaponEnhCost, weaponIcon, weaponPower, weaponRangeLabel, weaponSellValue, weaponsForClass, potionLabel } from "./data";
-import { BackpackScreen, PaperDollScreen } from "./InventoryScreens";
+import { PartyInventoryOverlay } from "./InventoryScreens";
 import type { Bag, ClassId, EquipSlot, PotionId, SaveData } from "./types";
 
 const BAG_ICON = pouchIcon(null);
@@ -301,16 +301,12 @@ export function InnScreen({
           <ChevronLeft className="size-4" /> Sair da estalagem
         </Button>
       </div>
-      {invView === "pack" && (
-        <BackpackScreen heroName={hero} save={save} onClose={() => setInvView(null)} onSwitchToDoll={() => setInvView("doll")} />
-      )}
-      {invView === "doll" && (
-        <PaperDollScreen
+      {invView && (
+        <PartyInventoryOverlay
           heroName={hero}
           classId={heroClass[hero] ?? "swordsman"}
           save={save}
           onClose={() => setInvView(null)}
-          onSwitchToBackpack={() => setInvView("pack")}
           onEquipWeapon={onEquipWeapon}
           onEquipItem={onEquipItem}
         />
@@ -536,16 +532,12 @@ function SmithPanel({
           <ChevronLeft className="size-4" /> Voltar à estalagem
         </Button>
       </div>
-      {invView === "pack" && (
-        <BackpackScreen heroName={hero} save={save} onClose={() => setInvView(null)} onSwitchToDoll={() => setInvView("doll")} />
-      )}
-      {invView === "doll" && (
-        <PaperDollScreen
+      {invView && (
+        <PartyInventoryOverlay
           heroName={hero}
           classId={heroClass[hero] ?? "swordsman"}
           save={save}
           onClose={() => setInvView(null)}
-          onSwitchToBackpack={() => setInvView("pack")}
           onEquipWeapon={onEquipWeapon}
           onEquipItem={onEquipItem}
         />

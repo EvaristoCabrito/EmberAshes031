@@ -5,10 +5,10 @@ import { loadGameArt, TILE_VARIANT_COUNT, tileVariantName, tileVariantSrc } from
 import { installAudioUnlock, playFile, playMenuMusic, playTheme, resumeAudio, setMuted, sfxPlay, stopMusic, unlockAudio } from "./audio";
 import { BattleCanvas } from "./BattleCanvas";
 import { InnScreen } from "./InnScreen";
-import { BackpackScreen, PaperDollScreen } from "./InventoryScreens";
+import { PartyInventoryOverlay } from "./InventoryScreens";
 import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, CURE_DISEASE, CURES, DECORATIONS, DOUBLE_STRIKE, doubleStrikeFormula, EQUIPMENT, EXP_TO_LEVEL, FIREBALL, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, MAGIC_MISSILE, PIERCING, piercingMul, PIERCING_THRUST, MAX_LEVEL, POTIONS, POTION_LOOT_WEIGHT, PROMOTE_LEVEL, PROMOTED_BASE, PROMOTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, TERRAIN, WEAPONS, WEAPON_MAX_ENH, WEB_OF_DREAMS, BAG_MAX, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, barricadeDecor, decorationCells, placedFootprint, decorationImage, diceFormula, emberForKill, enemyLevelFor, equippedPouchId, fireballFormula, healFormula, lightningFormula, dressMap, isSummonClass, MUSIC_TRACKS, SUMMON_CLASSES, parseLayout, potionLabel, pouchIcon, rangeLabel, sheetLine, spellFormula, spellTier, startingBags, statsFor, terrainNote, tierKey, tierUses, weaponEnhCost, weaponSellValue, MULTI_SHOT, multiShotFormula, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, STAMPEDE, stampedeFormula, type SpellTier } from "./data";
 import { BattleEngine } from "./engine";
-import { MapPreviewCanvas } from "./MapPreviewCanvas";
+import { MapPreviewCanvas, type PreviewUnitSelection } from "./MapPreviewCanvas";
 import { WorldMapScreen } from "./WorldMapScreen";
 import { DISPLAY_VERSION } from "./version";
 import { ALL_LOCATIONS, ALL_MISSIONS, LOCATION_SLOTS, draftToMission, latestSerialFor, locationFill, locationForMission, locationsForOrder, mapFileName, missionById, missionsForLocation, latestSavedDraft, savedScenarios, savedVersionsFor, serialLabel, slotsFor, type MapDraft, type MapFile, type DraftSpawn } from "./mapstore";
@@ -46,6 +46,38 @@ function armEditorResume(draft: MapDraft): void {
 function clearEditorResume(): void {
   try { window.sessionStorage.removeItem(EDITOR_RESUME_KEY); } catch { /* storage is optional */ }
 }
+/** Weapons belong to the party. Equipping one moves it from the previous wielder; only
+ * potions and lockpicks stay in the individual bags. */
+function equipSharedWeapon(save: SaveData, hero: string, weaponId: string): SaveData | null {
+  if (save.weapons[weaponId] == null) return null;
+  const equipped = { ...save.equipped };
+  for (const [owner, id] of Object.entries(equipped)) {
+    if (owner !== hero && id === weaponId) delete equipped[owner];
+  }
+  equipped[hero] = weaponId;
+  return { ...save, equipped };
+}
+
+/** Equipment is a physical party pool: select a reserve piece or transfer one from another
+ * hero. Consumable bags are intentionally not part of this function. */
+function equipSharedItem(save: SaveData, hero: string, slot: EquipSlot, itemId: string): SaveData | null {
+  const source = Object.entries(save.equipment)
+    .flatMap(([owner, slots]) => (Object.entries(slots) as [EquipSlot, string][]).map(([usedSlot, id]) => ({ owner, usedSlot, id })))
+    .find((entry) => entry.id === itemId && !(entry.owner === hero && entry.usedSlot === slot));
+  const reserve = save.looseEquipment[itemId] ?? 0;
+  const current = save.equipment[hero]?.[slot];
+  if (current === itemId) return save;
+  if (!source && reserve <= 0) return null;
+
+  const equipment = Object.fromEntries(Object.entries(save.equipment).map(([owner, slots]) => [owner, { ...slots }])) as SaveData["equipment"];
+  const looseEquipment = { ...save.looseEquipment };
+  if (source) delete equipment[source.owner]![source.usedSlot];
+  else if (reserve === 1) delete looseEquipment[itemId];
+  else looseEquipment[itemId] = reserve - 1;
+  if (current) looseEquipment[current] = (looseEquipment[current] ?? 0) + 1;
+  equipment[hero] = { ...(equipment[hero] ?? {}), [slot]: itemId };
+  return { ...save, equipment, looseEquipment };
+}
 function hudBlank(): HudSnapshot {
   return {
     phase: "player",
@@ -81,36 +113,68 @@ function hudBlank(): HudSnapshot {
   };
 }
 
+/** The inn only acts as a rest stop after its own chapter has been completed. */
 function innUnlocked(completed: string[]): boolean {
   return completed.includes("estalagem");
 }
 
-function lockedMission(id: string, completed: string[], test: boolean): boolean {
+/** The player advances through a location chapter-by-chapter. A new location becomes
+ * available only when every chapter in the prior populated location is complete. */
+function previousPopulatedLocation(location: WorldLocation, locations: WorldLocation[]): WorldLocation | null {
+  const at = locations.findIndex((candidate) => candidate.id === location.id);
+  for (let i = at - 1; i >= 0; i -= 1) {
+    const previous = locations[i]!;
+    if (missionsForLocation(previous).length > 0) return previous;
+  }
+  return null;
+}
+
+function lockedMission(
+  id: string,
+  completed: string[],
+  test: boolean,
+  locations: WorldLocation[],
+  fallbackOrder: string[],
+): boolean {
   if (test) return false;
-  const m = missionById(id);
-  if (!m) return true;
-  if (m.hub) return !innUnlocked(completed) && !ALL_MISSIONS.some((x) => x.index === m.index - 1 && completed.includes(x.id));
   if (completed.includes(id)) return true;
-  if (m.index === 0) return false;
-  const prev = ALL_MISSIONS.find((x) => x.index === m.index - 1);
-  return prev ? !completed.includes(prev.id) : false;
+
+  const location = locations.find((candidate) => candidate.missionIds.includes(id));
+  if (!location) {
+    const at = fallbackOrder.indexOf(id);
+    return at < 0 || (at > 0 && !fallbackOrder.slice(0, at).every((previousId) => completed.includes(previousId)));
+  }
+
+  const ids = missionsForLocation(location).map((mission) => mission.id);
+  const at = ids.indexOf(id);
+  if (at < 0) return true;
+  if (at > 0) return !ids.slice(0, at).every((previousId) => completed.includes(previousId));
+
+  const previousLocation = previousPopulatedLocation(location, locations);
+  return previousLocation !== null && !missionsForLocation(previousLocation).every((mission) => completed.includes(mission.id));
 }
 
-/** Per-mission status for the world map's location chapter list — "done" once completed,
- * else whatever lockedMission says, so chapters within a multi-mission location open one
- * at a time in the same order the flat campaign list already enforces. */
-function missionStatus(id: string, completed: string[], test: boolean): "locked" | "available" | "done" {
+function missionStatus(
+  id: string,
+  completed: string[],
+  test: boolean,
+  locations: WorldLocation[],
+  fallbackOrder: string[],
+): "locked" | "available" | "done" {
   if (completed.includes(id)) return "done";
-  return lockedMission(id, completed, test) ? "locked" : "available";
+  return lockedMission(id, completed, test, locations, fallbackOrder) ? "locked" : "available";
 }
 
-/** A world map location is "done" once every mission it covers is completed, "available"
- * once its next not-yet-completed mission is reachable, else "locked". */
-function locationStatus(loc: WorldLocation, completed: string[], test: boolean): "locked" | "available" | "done" {
-  const missions = missionsForLocation(loc);
-  const next = missions.find((m) => !completed.includes(m.id));
+function locationStatus(
+  location: WorldLocation,
+  completed: string[],
+  test: boolean,
+  locations: WorldLocation[],
+): "locked" | "available" | "done" {
+  const missions = missionsForLocation(location);
+  const next = missions.find((mission) => !completed.includes(mission.id));
   if (!next) return missions.length > 0 ? "done" : "locked";
-  return missionStatus(next.id, completed, test) === "locked" ? "locked" : "available";
+  return missionStatus(next.id, completed, test, locations, missions.map((mission) => mission.id)) === "locked" ? "locked" : "available";
 }
 
 const BRIEF_ART: Record<string, string> = {
@@ -367,8 +431,11 @@ export function GameApp() {
   const [campaignLocations, setCampaignLocations] = useState<WorldLocation[]>(() => ALL_LOCATIONS);
   useEffect(() => {
     const applySavedLocations = (event: Event) => {
-      const order = (event as CustomEvent<Record<string, string[]>>).detail;
-      if (order && typeof order === "object") setCampaignLocations(locationsForOrder(order));
+      const detail = (event as CustomEvent<{ missionOrder?: Record<string, string[]>; locationOrder?: string[] } | Record<string, string[]>>).detail;
+      if (!detail || typeof detail !== "object") return;
+      const missionOrder = "missionOrder" in detail ? detail.missionOrder : detail;
+      const locationOrder = "locationOrder" in detail && Array.isArray(detail.locationOrder) ? detail.locationOrder : undefined;
+      if (missionOrder && typeof missionOrder === "object") setCampaignLocations(locationsForOrder(missionOrder, locationOrder));
     };
     window.addEventListener("ember:locations-saved", applySavedLocations);
     return () => window.removeEventListener("ember:locations-saved", applySavedLocations);
@@ -518,7 +585,7 @@ export function GameApp() {
       // run (a "scenario") — only once the whole scenario is done, per direct instruction.
       // Stone Bridge (the tutorial) always resets, and so does the very first mission of any
       // scenario (nothing to carry over yet).
-      const loc = locationForMission(m.id);
+      const loc = campaignLocations.find((location) => location.missionIds.includes(m.id));
       const scenarioStart = !loc || loc.id === "stonebridge" || loc.missionIds.every((mid) => !save.completed.includes(mid));
       const spellSpent = testMode || scenarioStart ? undefined : save.spellUses;
       const battle = new BattleEngine(m, art, { hp, levels, bags, xp, promotions, weapons, offHand, equipment, enemyLevels, ownedWeaponIds, spellSpent }, Date.now() % 100000);
@@ -531,7 +598,7 @@ export function GameApp() {
       setSlotMode(null);
       setScreen("battle");
     },
-    [art, save, testMode, muted, bank],
+    [art, save, testMode, muted, bank, campaignLocations],
   );
 
   const onHud = useCallback((next: HudSnapshot) => {
@@ -688,7 +755,9 @@ export function GameApp() {
       setScreen("cutscene");
       return;
     }
-    if (mission?.hub || missionId === "estalagem") {
+    // Only the actual inn opens the InnScreen. A user-authored map may retain an old hub flag.
+    // It must still launch its own battle when selected from the campaign.
+    if (missionId === "estalagem") {
       const completed = save.completed.includes(missionId) ? save.completed : [...save.completed, missionId];
       if (!testMode) persistCurrent({ ...save, completed, pendingMission: null });
       setScreen("inn");
@@ -714,7 +783,7 @@ export function GameApp() {
     // this is the default for missions that never picked one.
     // Only a track that is actually there wins: a name left behind by a renamed or removed
     // file falls through to the theme chain instead of leaving the mission silent.
-    const named = inMission ? ALL_MISSIONS.find((m) => m.id === missionId)?.music : undefined;
+    const named = inMission ? mission?.music : undefined;
     const chosen = named && MUSIC_TRACKS.includes(named) ? named : undefined;
     if (chosen) {
       playFile(chosen);
@@ -760,8 +829,15 @@ export function GameApp() {
   }, [screen, muted, missionId]);
 
   const leaveBoot = useCallback(() => {
-    playMenuMusic();
+    // Entering the world map is a hard music boundary: do not leave intro.mp3 under it.
+    playTheme("worldMap");
     setScreen("worldMap");
+  }, []);
+
+  const goToTitle = useCallback(() => {
+    stopMusic();
+    playMenuMusic();
+    setScreen("title");
   }, []);
 
   return (
@@ -807,7 +883,7 @@ export function GameApp() {
 
       {screen === "testMenu" && (
         <TestMenuScreen
-          onBack={() => setScreen("title")}
+          onBack={goToTitle}
           onDebug={() => setScreen("worldMap")}
           onMapEditor={() => setScreen("mapEditor")}
         />
@@ -833,6 +909,7 @@ export function GameApp() {
       {screen === "campaign" && (
         <CampaignScreen
           missions={campaignMissions}
+          locations={campaignLocations}
           completed={save.completed}
           test={testMode}
           ember={testMode ? testEmber : (save.ember ?? 0)}
@@ -844,8 +921,8 @@ export function GameApp() {
       {screen === "worldMap" && (
         <WorldMapScreen
           locations={campaignLocations}
-          status={(loc) => locationStatus(loc, save.completed, testMode)}
-          missionStatus={(id) => missionStatus(id, save.completed, testMode)}
+          status={(loc) => locationStatus(loc, save.completed, testMode, campaignLocations)}
+          missionStatus={(id) => missionStatus(id, save.completed, testMode, campaignLocations, campaignMissions.map((mission) => mission.id))}
           ember={testMode ? testEmber : (save.ember ?? 0)}
           test={testMode}
           muted={muted}
@@ -854,7 +931,7 @@ export function GameApp() {
             setMutedUi((v) => !v);
           }}
           autoOpenLocationId={openLocationOnMap}
-          centerLocationId={locationForMission(ALL_MISSIONS.find((m) => !m.hub && !save.completed.includes(m.id))?.id ?? "")?.id ?? null}
+          centerLocationId={campaignLocations.find((location) => location.missionIds.some((id) => !save.completed.includes(id)))?.id ?? null}
           onBack={() => setScreen(testMode ? "testMenu" : "title")}
           onPick={openMission}
           onOpenList={() => setScreen("campaign")}
@@ -897,17 +974,13 @@ export function GameApp() {
           }}
           onEquipWeapon={(hero: string, weaponId: string) => {
             const rec = activeSave(bank);
-            if (rec.weapons[weaponId] == null) return;
-            persistCurrent({ ...rec, equipped: { ...rec.equipped, [hero]: weaponId }, pendingMission: null });
+            const next = equipSharedWeapon(rec, hero, weaponId);
+            if (next) persistCurrent({ ...next, pendingMission: null });
           }}
           onEquipItem={(hero: string, slot: EquipSlot, itemId: string) => {
             const rec = activeSave(bank);
-            if ((rec.looseEquipment[itemId] ?? 0) <= 0) return;
-            persistCurrent({
-              ...rec,
-              equipment: { ...rec.equipment, [hero]: { ...(rec.equipment[hero] ?? {}), [slot]: itemId } },
-              pendingMission: null,
-            });
+            const next = equipSharedItem(rec, hero, slot, itemId);
+            if (next) persistCurrent({ ...next, pendingMission: null });
           }}
           onUpgradeWeapon={(weaponId: string) => {
             const rec = activeSave(bank);
@@ -1006,19 +1079,15 @@ export function GameApp() {
           // from the loot list, so recording ownership here is what keeps it.
           onEquipWeapon={(hero, weaponId, alsoOwn) => {
             const rec = activeSave(bank);
-            persistCurrent({
-              ...rec,
-              weapons: alsoOwn && rec.weapons[weaponId] == null ? { ...rec.weapons, [weaponId]: 0 } : rec.weapons,
-              equipped: { ...rec.equipped, [hero]: weaponId },
-            });
+            const owned = alsoOwn && rec.weapons[weaponId] == null ? { ...rec, weapons: { ...rec.weapons, [weaponId]: 0 } } : rec;
+            const next = equipSharedWeapon(owned, hero, weaponId);
+            if (next) persistCurrent(next);
           }}
           onEquipItem={(hero, slot, itemId, alsoOwn) => {
             const rec = activeSave(bank);
-            persistCurrent({
-              ...rec,
-              looseEquipment: alsoOwn ? { ...rec.looseEquipment, [itemId]: (rec.looseEquipment[itemId] ?? 0) + 1 } : rec.looseEquipment,
-              equipment: { ...rec.equipment, [hero]: { ...(rec.equipment[hero] ?? {}), [slot]: itemId } },
-            });
+            const owned = alsoOwn ? { ...rec, looseEquipment: { ...rec.looseEquipment, [itemId]: (rec.looseEquipment[itemId] ?? 0) + 1 } } : rec;
+            const next = equipSharedItem(owned, hero, slot, itemId);
+            if (next) persistCurrent(next);
           }}
           onHud={onHud}
           onPause={() => setPaused(true)}
@@ -1078,7 +1147,7 @@ export function GameApp() {
             // Recomputed rather than read off save.completed directly — testMode never
             // persists, so save.completed wouldn't yet include this mission there.
             const completed = save.completed.includes(mission.id) ? save.completed : [...save.completed, mission.id];
-            const loc = locationForMission(mission.id);
+            const loc = campaignLocations.find((location) => location.missionIds.includes(mission.id));
             const scenarioDone = !loc || loc.missionIds.every((id) => completed.includes(id));
             // Mid-scenario: reopen the world map straight onto this mission's location so
             // its list pops open immediately — a multi-mission location plays as one
@@ -1089,7 +1158,7 @@ export function GameApp() {
             setScreen("worldMap");
           }}
           mapLabel={customMission ? "Voltar ao editor" : "Mapa"}
-          onTitle={() => setScreen("title")}
+          onTitle={goToTitle}
           // The raw "next mission by global index" shortcut this used to offer could skip
           // straight past an entire other location (missions aren't numbered in location
           // order) — hasNext is always false below now, so this never fires; onMap is the
@@ -1111,7 +1180,7 @@ export function GameApp() {
           turn={hud.turn}
           growth={null}
           art={briefArt(mission.id)}
-          onTitle={() => setScreen("title")}
+          onTitle={goToTitle}
           onNext={() => startBattle(mission.id, save.unitHp, customMission ?? undefined)}
           onMap={
             customMission
@@ -2206,6 +2275,7 @@ function MapEditorScreen({
   // spawn's level) would be wasted work it can't even show — debounce to the pause after a
   // real edit instead.
   const [previewMission, setPreviewMission] = useState<Mission | null>(null);
+  const [selectedPreviewUnit, setSelectedPreviewUnit] = useState<PreviewUnitSelection | null>(null);
   const [shuffleExclude, setShuffleExclude] = useState<Set<string>>(() => new Set(loadDecoShuffleExclude()));
   const toggleShuffleExclude = (id: string) => {
     setShuffleExclude((prev) => {
@@ -2265,6 +2335,9 @@ function MapEditorScreen({
   const [order, setOrder] = useState<Record<string, string[]>>(() =>
     Object.fromEntries(ALL_LOCATIONS.map((l) => [l.id, [...l.missionIds]])),
   );
+  // This is the chapter order between world-map markers. It is independent from the
+  // missions listed inside each location and does not move the markers visually.
+  const [locationOrder, setLocationOrder] = useState<string[]>(() => ALL_LOCATIONS.map((location) => location.id));
 
   /** Writes src/game/map-order.json through the dev server. Config, not a version — a new
    * order replaces the old one rather than adding a serial. */
@@ -2306,6 +2379,17 @@ function MapEditorScreen({
     if (i < 0 || j < 0 || j >= list.length) return;
     [list[i], list[j]] = [list[j]!, list[i]!];
     void saveOrder({ ...order, [locationId]: list });
+  };
+
+  const moveLocationInOrder = (locationId: string, dir: -1 | 1) => {
+    setLocationOrder((current) => {
+      const next = [...current];
+      const i = next.indexOf(locationId);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= next.length) return current;
+      [next[i], next[j]] = [next[j]!, next[i]!];
+      return next;
+    });
   };
 
   const versions = versionStore[draft.id] ?? [];
@@ -2405,15 +2489,17 @@ function MapEditorScreen({
     try {
       const o = await post("/__map-order", order);
       const sl = await post("/__map-slots", slots);
+      const lo = await post("/__location-order", locationOrder);
       const locais = Object.keys((o.onDisk as Record<string, unknown>) ?? {}).length;
       const vagas = Object.keys((sl.onDisk as Record<string, unknown>) ?? {}).length;
-      window.dispatchEvent(new CustomEvent("ember:locations-saved", { detail: order }));
+      window.dispatchEvent(new CustomEvent("ember:locations-saved", { detail: { missionOrder: order, locationOrder } }));
       setBigNote({
         ok: true,
         title: "ESTÁ SALVO",
         lines: [
           `${o.file} — ${locais} ${locais === 1 ? "local" : "locais"} com ordem definida`,
           `${sl.file} — ${vagas} ${vagas === 1 ? "local" : "locais"} com vagas definidas`,
+          `${lo.file} — sequência de locais da campanha confirmada`,
           "Confirmado relendo os arquivos do disco, não é só promessa.",
         ],
       });
@@ -2427,7 +2513,7 @@ function MapEditorScreen({
           "Sem servidor de dev não há onde gravar — rodando pelo start.bat no PC, ou pelo Codespaces, funciona.",
           "O texto abaixo é a sua configuração. Copie e guarde: cola numa conversa e eu gravo por você.",
         ],
-        dump: JSON.stringify({ order, slots }, null, 2),
+        dump: JSON.stringify({ order, locationOrder, slots }, null, 2),
       });
     }
   };
@@ -2709,6 +2795,29 @@ function MapEditorScreen({
     setDraft((d) => ({ ...d, [side]: (d[side] ?? []).filter((_, idx) => idx !== i) }));
   };
 
+  const selectPreviewUnit = (unit: PreviewUnitSelection) => {
+    setSelectedPreviewUnit(unit);
+    setNote(`${unit.name} selecionado. Clique direito em um hex vazio da prévia para definir sua posição inicial.`);
+  };
+
+  const placePreviewUnit = (selected: PreviewUnitSelection, x: number, y: number) => {
+    setSelectedPreviewUnit(selected);
+    const occupied = SPAWN_KEYS.some((side) => (draft[side] ?? []).some((spawn, index) =>
+      !(side === selected.side && index === selected.index) && spawn.x === x && spawn.y === y,
+    ));
+    if (occupied) {
+      setNote("Esse hex já tem uma unidade. Escolha um hex vazio.");
+      return;
+    }
+    const current = (draft[selected.side] ?? [])[selected.index];
+    if (!current) {
+      setSelectedPreviewUnit(null);
+      setNote("Essa unidade não existe mais. Arraste outra na prévia.");
+      return;
+    }
+    updateSpawn(selected.side, selected.index, { x, y });
+    setNote(`${current.name} movido para ${x},${y}.`);
+  };
   /** Drops one hero or the whole party on the bottom row. Worked out from the current draft
    * rather than inside the state updater: React runs that when it pleases, so counting
    * there reported on placements that had not happened yet. */
@@ -2869,7 +2978,7 @@ function MapEditorScreen({
   const summonOptions = [...SUMMON_CLASSES].sort((a, b) => byName(CLASSES[a].name, CLASSES[b].name));
   const decorOptions = Object.values(DECORATIONS).sort((a, b) => byName(a.name, b.name));
   const decorationSectionFor = (id: string) => {
-    if (id.includes("bridge") || id.includes("midspan") || id.includes("exhibition-cages") || id.includes("ember-channels")) return "Pontes";
+    if (id.includes("bridge") || id.includes("ember-channels")) return "Pontes";
     if (id.includes("mountain") || id.includes("ridge") || id.includes("rock") || id.includes("boulder") || id.includes("spike") || id.includes("cliff")) return "Pedras e relevo";
     if (id.includes("tree") || id.includes("forest") || id.includes("wood") || id.includes("log") || id.includes("mossy")) return "Natureza";
     if (id.includes("ruined") || id.includes("tower") || id.includes("mansion") || id.includes("wall") || id.includes("gate") || id.includes("shrine") || id.includes("house") || id.includes("hut") || id.includes("hamlet")) return "Ruínas e construções";
@@ -3260,7 +3369,7 @@ function MapEditorScreen({
             {(TILE_VARIANT_COUNT[brush] ?? 1) >= 1 && (
               <div className="flex items-start gap-1.5 text-xs">
                 <span className="mt-1 text-muted uppercase tracking-wide">Versões</span>
-                <div className="h-28 min-h-[104px] min-w-0 flex-1 overflow-x-auto overflow-y-hidden rounded-md border border-border bg-bg/40 p-1.5 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
+                <div className="h-28 min-h-[104px] min-w-0 flex-1 ember-scrollbar overflow-x-auto overflow-y-hidden rounded-md border border-border bg-bg/40 p-1.5">
                   <div className="grid grid-flow-col grid-rows-2 auto-cols-max gap-1.5">
                     {Array.from({ length: TILE_VARIANT_COUNT[brush] ?? 1 }, (_, i) => (
                   <button
@@ -3308,7 +3417,7 @@ function MapEditorScreen({
               entra no mapa se você colocar à mão.
             </p>
 
-            <div className="overflow-x-auto overflow-y-hidden border border-border rounded-md p-1.5 bg-bg/40 h-28 min-h-[104px] min-w-[280px] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+            <div className="ember-scrollbar overflow-x-auto overflow-y-hidden border border-border rounded-md p-1.5 bg-bg/40 h-28 min-h-[104px] min-w-[280px]">
               <div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-1.5">
                 {visibleDecorOptions.map((dec) => {
                   const excluded = shuffleExclude.has(dec.id);
@@ -3444,7 +3553,15 @@ function MapEditorScreen({
             minHeight={220}
           >
             {previewMission ? (
-              <MapPreviewCanvas mission={previewMission} art={art} onCellClick={onCellClick} selectedDecorationId={mode === "decoration" ? decoBrush : undefined} />
+              <MapPreviewCanvas
+                mission={previewMission}
+                art={art}
+                onCellClick={onCellClick}
+                selectedDecorationId={mode === "decoration" ? decoBrush : undefined}
+                selectedUnit={selectedPreviewUnit}
+                onUnitSelect={selectPreviewUnit}
+                onUnitPlace={placePreviewUnit}
+              />
             ) : (
               <div className="h-full w-full grid place-items-center text-xs text-muted">Carregando prévia…</div>
             )}
@@ -3452,8 +3569,7 @@ function MapEditorScreen({
         )}
 
         <ResizableEditorPanel
-          className="overflow-auto border border-border rounded-md p-2 bg-black h-[60vh] min-h-[320px] min-w-[280px] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full"
-          style={{ scrollbarWidth: "auto", scrollbarColor: "var(--color-border, #5a5a5a) transparent" }}
+          className="ember-scrollbar overflow-auto border border-border rounded-md p-2 bg-black h-[60vh] min-h-[320px] min-w-[280px]"
           title="Arraste esta alça para redimensionar o mapa"
           minHeight={320}
         >
@@ -3846,7 +3962,7 @@ function MapEditorScreen({
             <div className="flex items-center justify-between gap-3 mb-3">
               <div>
                 <p className="font-display text-xl leading-tight">Locais</p>
-                <p className="text-xs text-muted">Ordem em que as missões aparecem, e para onde cada uma vai.</p>
+                <p className="text-xs text-muted">Setas do título mudam a progressão entre Locais; setas das missões mudam a sequência interna.</p>
               </div>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="quiet" onClick={() => void saveScenarios()}>
@@ -3859,15 +3975,25 @@ function MapEditorScreen({
             </div>
 
             <div className="flex flex-col gap-3">
-              {ALL_LOCATIONS.map((loc) => {
+              {locationOrder.map((locationId, locationIndex) => {
+                const loc = ALL_LOCATIONS.find((location) => location.id === locationId);
+                if (!loc) return null;
                 const ids = order[loc.id] ?? loc.missionIds;
                 const planned = slotsFor(loc.id);
                 return (
                   <div key={loc.id} className="border border-border rounded-md p-2.5">
-                    <p className="text-xs uppercase tracking-wide text-muted mb-1.5">
-                      {loc.name}
-                      {planned > 0 ? ` · ${ids.length}/${planned}` : ids.length > 0 ? ` · ${ids.length}` : " · vazio"}
-                    </p>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <p className="flex-1 text-xs uppercase tracking-wide text-muted">
+                        {locationIndex + 1}. {loc.name}
+                        {planned > 0 ? ` · ${ids.length}/${planned}` : ids.length > 0 ? ` · ${ids.length}` : " · vazio"}
+                      </p>
+                      <button type="button" disabled={locationIndex === 0} onClick={() => moveLocationInOrder(loc.id, -1)} className="px-1.5 rounded border border-border disabled:opacity-30" aria-label={`Subir ${loc.name} na campanha`} title="Subir Local na campanha">
+                        ↑
+                      </button>
+                      <button type="button" disabled={locationIndex === locationOrder.length - 1} onClick={() => moveLocationInOrder(loc.id, 1)} className="px-1.5 rounded border border-border disabled:opacity-30" aria-label={`Descer ${loc.name} na campanha`} title="Descer Local na campanha">
+                        ↓
+                      </button>
+                    </div>
                     <div className="mb-2 flex items-center gap-2">
                       <Button
                         size="sm"
@@ -3985,6 +4111,7 @@ function MapEditorScreen({
 
 function CampaignScreen({
   missions = ALL_MISSIONS,
+  locations = ALL_LOCATIONS,
   completed,
   test,
   ember,
@@ -3992,6 +4119,7 @@ function CampaignScreen({
   onPick,
 }: {
   missions?: Mission[];
+  locations?: WorldLocation[];
   completed: string[];
   test: boolean;
   ember: number;
@@ -4012,7 +4140,7 @@ function CampaignScreen({
       </header>
       <ol className="flex-1 min-h-0 overflow-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))] flex flex-col gap-2">
         {missions.map((m, campaignNumber) => {
-          const lock = lockedMission(m.id, completed, test);
+          const lock = lockedMission(m.id, completed, test, locations, missions.map((mission) => mission.id));
           const done = completed.includes(m.id);
           const openInn = !!m.hub && !lock;
           return (
@@ -4078,7 +4206,7 @@ function BriefingScreen({
       </div>
       <div className="relative z-10 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
         <Button size="xl" className="w-full max-w-xl" onClick={onStart}>
-          <Swords className="size-5" /> {mission.hub ? "Entrar" : "Entrar em combate"}
+          <Swords className="size-5" /> {mission.id === "estalagem" ? "Entrar" : "Entrar em combate"}
         </Button>
       </div>
     </section>
@@ -4704,13 +4832,12 @@ function BattleScreen({
         />
       )}
 
-      {invView === "doll" && unit && unit.side === "player" && (
-        <PaperDollScreen
+      {invView && unit && unit.side === "player" && (
+        <PartyInventoryOverlay
           heroName={unit.name}
           classId={unit.classId}
           save={liveSave}
           onClose={() => setInvView(null)}
-          onSwitchToBackpack={() => setInvView("pack")}
           // Gear changes mid-battle cost nothing — not the action, not the movement, and
           // they can repeat until the turn is passed. Each one writes through to the save
           // as well as the live unit, so a swap made in a fight is permanent whether the
@@ -4724,21 +4851,13 @@ function BattleScreen({
             onEquipWeapon?.(hero, weaponId, !owned);
           }}
           onEquipItem={(hero, slot, itemId) => {
-            const owned = (save.looseEquipment[itemId] ?? 0) > 0;
+            const owned = (save.looseEquipment[itemId] ?? 0) > 0 || Object.values(save.equipment).some((slots) => Object.values(slots).includes(itemId));
             const found = engine.lootEquipment.includes(itemId);
             if (!owned && !found) return;
             if (!engine.equipItemOn(unit.id, slot, itemId)) return;
             if (!owned) engine.claimLoot("equipment", itemId);
             onEquipItem?.(hero, slot, itemId, !owned);
           }}
-        />
-      )}
-      {invView === "pack" && unit && unit.side === "player" && (
-        <BackpackScreen
-          heroName={unit.name}
-          save={liveSave}
-          onClose={() => setInvView(null)}
-          onSwitchToDoll={() => setInvView("doll")}
         />
       )}
 

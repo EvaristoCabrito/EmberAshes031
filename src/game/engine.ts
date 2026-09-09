@@ -133,8 +133,8 @@ const MISSILE_TRAVEL = 0.34;
 /** stepSpell's hit tick, per spellKind — every other spell keeps the original 0.18; only
  * Magic Missile's is tied to its own (now longer) travel time. */
 const MISSILE_HIT_AT = MISSILE_TRAVEL;
-/** Arrows travel deliberately slower than arcane bolts. */
-const ARROW_TRAVEL = MISSILE_TRAVEL * 1.25;
+/** Standard projectile timing: Neera's arrows now land at the same speed as the rest of combat. */
+const ARROW_TRAVEL = MISSILE_TRAVEL;
 /** How much longer the bolt's glowing trail lingers on screen, fading, after the bolt
  * itself has already landed. Kept short enough that MISSILE_TRAVEL + this stays under 0.55
  * — stepSpell's own finishCombat threshold for every spell — so the trail's afterglow never
@@ -3755,6 +3755,16 @@ export class BattleEngine {
     const def = WEAPONS[weaponId];
     if (!def) return false;
 
+    for (const other of this.units) {
+      if (other !== u && other.side === "player" && other.weaponId === weaponId) {
+        other.weaponId = null;
+        other.weaponEnh = 0;
+        other.minRange = 1;
+        other.maxRange = 1;
+        this.reapplyGear(other);
+      }
+    }
+
     u.weaponId = weaponId;
     u.weaponEnh = Math.max(0, Math.min(WEAPON_MAX_ENH, Math.floor(enh)));
     u.minRange = def.minRange;
@@ -3781,6 +3791,19 @@ export class BattleEngine {
     const item = itemId ? EQUIPMENT[itemId] : null;
     if (itemId && (!item || item.slot !== slot)) return false;
     if (slot === "offHand" && itemId && offHandBlocked(u.weaponId)) return false;
+
+    if (itemId) {
+      for (const other of this.units) {
+        if (other === u || other.side !== "player") continue;
+        for (const [otherSlot, equippedId] of Object.entries(other.gear) as [EquipSlot, string][]) {
+          if (equippedId !== itemId) continue;
+          delete other.gear[otherSlot];
+          if (otherSlot === "offHand") other.offHandId = null;
+          this.reapplyGear(other);
+          break;
+        }
+      }
+    }
 
     if (itemId) u.gear[slot] = itemId;
     else delete u.gear[slot];

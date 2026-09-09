@@ -2,6 +2,12 @@ import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { BattleEngine } from "./engine";
 import type { GameArt, Mission } from "./types";
 
+export type PreviewUnitSelection = {
+  side: "playerSpawns" | "enemySpawns" | "neutralSpawns";
+  index: number;
+  name: string;
+};
+
 // The technical map is a native scroll surface; keep preview scrollbar travel deliberately gentler.
 const PREVIEW_SCROLL_PAN_RATE = 0.45;
 
@@ -11,12 +17,21 @@ const PREVIEW_SCROLL_PAN_RATE = 0.45;
  * render(), never tick(): no animation loop, no AI, no turns — just a live snapshot that
  * redraws whenever the mission prop changes (the caller debounces that) or the panel resizes.
  * A left click can use the current editor brush directly; gameplay state remains untouched. */
-export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecorationId }: { mission: Mission; art: GameArt; onCellClick?: (x: number, y: number) => void; selectedDecorationId?: string }) {
+export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecorationId, selectedUnit, onUnitSelect, onUnitPlace }: {
+  mission: Mission;
+  art: GameArt;
+  onCellClick?: (x: number, y: number) => void;
+  selectedDecorationId?: string;
+  selectedUnit?: PreviewUnitSelection | null;
+  onUnitSelect?: (unit: PreviewUnitSelection) => void;
+  onUnitPlace?: (unit: PreviewUnitSelection, x: number, y: number) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<BattleEngine | null>(null);
   const redrawRef = useRef<(() => void) | null>(null);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; startX: number; startY: number; armed: boolean; moved: boolean } | null>(null);
+  const unitDragRef = useRef<{ pointerId: number; unit: PreviewUnitSelection } | null>(null);
   const cameraRef = useRef<{ x: number; y: number } | null>(null);
   const verticalScrollTopRef = useRef(0);
   const horizontalScrollLeftRef = useRef(0);
@@ -24,10 +39,23 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
   const armTimerRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
+  const [isUnitDragging, setIsUnitDragging] = useState(false);
   // Same board width used by the technical map. The scroll surface only becomes wider
   // when this real board is wider than its window, so the horizontal bar is not permanent.
   const previewTileRadius = zoom < 1.125 ? 34 : zoom < 1.375 ? 50 : 72;
   const previewBoardWidth = Math.ceil(previewTileRadius * Math.sqrt(3) * (mission.cols + 0.5));
+  const unitAt = (x: number, y: number): PreviewUnitSelection | null => {
+    const groups = [
+      { side: "playerSpawns" as const, units: mission.playerSpawns },
+      { side: "enemySpawns" as const, units: mission.enemySpawns },
+      { side: "neutralSpawns" as const, units: mission.neutralSpawns ?? [] },
+    ];
+    for (const group of groups) {
+      const index = group.units.findIndex((unit) => unit.x === x && unit.y === y);
+      if (index >= 0) return { side: group.side, index, name: group.units[index]!.name };
+    }
+    return null;
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -93,9 +121,25 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
   }, [mission, art, onCellClick, selectedDecorationId, zoom]);
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
+    if (event.button === 2) {
+      event.preventDefault();
+      const canvas = canvasRef.current;
+      const engine = engineRef.current;
+      if (!canvas || !engine) return;
+      const rect = canvas.getBoundingClientRect();
+      const cell = engine.cellAt(event.clientX - rect.left, event.clientY - rect.top);
+      if (!cell) return;
+      const unit = unitAt(cell.x, cell.y);
+      if (!unit) return;
+      unitDragRef.current = { pointerId: event.pointerId, unit };
+      viewport.setPointerCapture(event.pointerId);
+      onUnitSelect?.(unit);
+      setIsUnitDragging(true);
+      return;
+    }
+    if (event.button !== 0) return;
     dragRef.current = {
       pointerId: event.pointerId,
       x: event.clientX,
@@ -114,8 +158,9 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
       setIsPanning(true);
     }, 1000);
   };
-
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const unitDrag = unitDragRef.current;
+    if (unitDrag?.pointerId === event.pointerId) return;
     const viewport = viewportRef.current;
     const drag = dragRef.current;
     if (!viewport || !drag || drag.pointerId !== event.pointerId) return;
@@ -139,28 +184,43 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
 
   const endDrag = (event: PointerEvent<HTMLDivElement>, cancelled = false) => {
     const viewport = viewportRef.current;
+    if (!viewport) return;
+    const unitDrag = unitDragRef.current;
+    if (unitDrag?.pointerId === event.pointerId) {
+      if (!cancelled) {
+        const canvas = canvasRef.current;
+        const engine = engineRef.current;
+        if (canvas && engine) {
+          const rect = canvas.getBoundingClientRect();
+          const cell = engine.cellAt(event.clientX - rect.left, event.clientY - rect.top);
+          if (cell) onUnitPlace?.(unitDrag.unit, cell.x, cell.y);
+        }
+      }
+      if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
+      unitDragRef.current = null;
+      setIsUnitDragging(false);
+      return;
+    }
     const drag = dragRef.current;
-    if (!viewport || !drag || drag.pointerId !== event.pointerId) return;
+    if (!drag || drag.pointerId !== event.pointerId) return;
     if (armTimerRef.current !== null) {
       window.clearTimeout(armTimerRef.current);
       armTimerRef.current = null;
     }
-    // Handle painting here, from the same pointer sequence that owns pan. This
-    // avoids browser click synthesis getting lost when the wrapper has capture.
-    if (!cancelled && !drag.moved && event.button === 0 && onCellClick) {
+    // Normal left click remains the terrain/decorations brush. Panning is still hold + drag.
+    if (!cancelled && !drag.moved && event.button === 0) {
       const canvas = canvasRef.current;
       const engine = engineRef.current;
       if (canvas && engine) {
         const rect = canvas.getBoundingClientRect();
         const cell = engine.cellAt(event.clientX - rect.left, event.clientY - rect.top);
-        if (cell) onCellClick(cell.x, cell.y);
+        if (cell) onCellClick?.(cell.x, cell.y);
       }
     }
     if (viewport.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
     dragRef.current = null;
     setIsPanning(false);
   };
-
   const onViewportScroll = () => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -207,17 +267,18 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
         </button>
       </div>
       <div className="pointer-events-none absolute bottom-2 right-2 z-10 rounded border border-border/70 bg-surface/90 px-2 py-1 text-[10px] text-muted shadow-sm">
-        Clique pinta · segure e arraste para mover
+        {isUnitDragging ? "Arrastando unidade… solte no hex de destino" : selectedUnit ? `${selectedUnit.name} selecionado · arraste com botão direito para mover` : "Botão direito arrasta unidades · esquerdo pinta · segure e arraste para mover"}
       </div>
       <div
         ref={viewportRef}
-        className={`h-full w-full bg-black overflow-x-auto overflow-y-scroll [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border ${isPanning ? "cursor-grabbing" : "cursor-default"}`}
-        style={{ scrollbarWidth: "auto", scrollbarColor: "var(--color-border, #5a5a5a) transparent", scrollbarGutter: "stable both-edges" }}
+        className={`h-full w-full bg-black ember-scrollbar overflow-x-auto overflow-y-scroll ${isUnitDragging || isPanning ? "cursor-grabbing" : "cursor-default"}`}
+        style={{ scrollbarGutter: "stable both-edges" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={(event) => endDrag(event, true)}
         onLostPointerCapture={(event) => endDrag(event, true)}
+        onContextMenu={(event) => event.preventDefault()}
         onScroll={onViewportScroll}
       >
         <div className="min-h-[300%]" style={{ width: `max(100%, ${previewBoardWidth}px)` }}>

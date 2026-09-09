@@ -172,3 +172,50 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Scrollbars are part of the world UI, not operating-system chrome: black iron track,
+   tarnished bronze rim, and an ember-lit grip. */
+:root {
+  scrollbar-color: #8e5b2c #100d0c;
+  scrollbar-width: thin;
+}
+
+.ember-scrollbar,
+.ember-scrollbar * {
+  scrollbar-color: #8e5b2c #100d0c;
+  scrollbar-width: thin;
+}
+
+.ember-scrollbar::-webkit-scrollbar,
+::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+.ember-scrollbar::-webkit-scrollbar-track,
+::-webkit-scrollbar-track {
+  background: linear-gradient(90deg, #090808 0%, #201713 48%, #090808 100%);
+  border: 1px solid #4b3020;
+  box-shadow: inset 0 0 0 1px #050505, inset 0 0 8px rgba(0, 0, 0, 0.9);
+}
+
+.ember-scrollbar::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb {
+  min-height: 34px;
+  min-width: 34px;
+  border: 3px solid #17100d;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #d1a05f 0%, #7b4826 36%, #2a1710 68%, #ad7138 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 211, 139, 0.35), 0 0 7px rgba(190, 85, 24, 0.32);
+}
+
+.ember-scrollbar::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, #f0c57b 0%, #a96330 38%, #3a1c10 68%, #d78a42 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 231, 172, 0.62), 0 0 11px rgba(231, 110, 31, 0.58);
+}
+
+.ember-scrollbar::-webkit-scrollbar-corner,
+::-webkit-scrollbar-corner {
+  background: #100d0c;
+}

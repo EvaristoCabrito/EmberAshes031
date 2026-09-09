@@ -261,6 +261,7 @@ let portaoEl: HTMLAudioElement | null = null;
 let worldMapEl: HTMLAudioElement | null = null;
 type Theme = "intro" | "battle" | "early" | "temple" | "aldeia" | "siege" | "inn" | "hill" | "portao" | "worldMap";
 let currentTheme: Theme = "intro";
+let currentFile: string | null = null;
 
 if (typeof window !== "undefined") {
   const g = window as Window & { __emberIntro?: HTMLAudioElement };
@@ -351,6 +352,18 @@ function menuElement(): HTMLAudioElement | null {
   return node;
 }
 
+/** HMR and older builds may leave a detached intro element behind. Keep the title track
+ * exclusive even when it is no longer the module's current introEl reference. */
+function pauseIntroTracks(except: HTMLAudioElement | null = null): void {
+  if (typeof document !== "undefined") {
+    document.querySelectorAll("audio").forEach((node) => {
+      if (node === except) return;
+      if (/\/game\/music\/intro\.mp3(?:[?#]|$)/i.test(node.src)) node.pause();
+    });
+  }
+  if (introEl && introEl !== except) introEl.pause();
+}
+
 function kickPlay(el: HTMLAudioElement): void {
   if (muted) return;
   if (!el.paused && !el.ended) return;
@@ -411,69 +424,60 @@ function getFileTrack(file: string): HTMLAudioElement | null {
 /** Plays one specific file from public/game/MUSIC, silencing everything else — the escape
  * hatch from the fixed Theme list, so a mission can name its own track. */
 export function playFile(file: string): void {
+  currentFile = file;
   if (muted) return;
   const want = getFileTrack(file);
+  pauseIntroTracks(want === introEl ? introEl : null);
   silenceAllBut(want);
   if (!want) return;
   kickPlay(want);
 }
-
 /** Stops every track except the one asked for, themes and per-file alike. */
 function silenceAllBut(want: HTMLAudioElement | null): void {
   const others = [introEl, battleEl, earlyEl, templeEl, aldeiaEl, siegeEl, innEl, hillEl, portaoEl, worldMapEl, ...fileEls.values()];
   for (const el of others) {
     if (!el || el === want) continue;
     el.pause();
-    if (el !== introEl) el.currentTime = 0;
   }
 }
 
 export function playTheme(theme: Theme): void {
   currentTheme = theme;
+  currentFile = null;
   if (muted) return;
   const want = getTrack(theme);
-  if (introEl && introEl !== want) introEl.pause();
+  pauseIntroTracks(want === introEl ? introEl : null);
   if (battleEl && battleEl !== want) {
     battleEl.pause();
-    battleEl.currentTime = 0;
   }
   if (earlyEl && earlyEl !== want) {
     earlyEl.pause();
-    earlyEl.currentTime = 0;
   }
   if (templeEl && templeEl !== want) {
     templeEl.pause();
-    templeEl.currentTime = 0;
   }
   if (aldeiaEl && aldeiaEl !== want) {
     aldeiaEl.pause();
-    aldeiaEl.currentTime = 0;
   }
   if (siegeEl && siegeEl !== want) {
     siegeEl.pause();
-    siegeEl.currentTime = 0;
   }
   if (innEl && innEl !== want) {
     innEl.pause();
-    innEl.currentTime = 0;
   }
   if (hillEl && hillEl !== want) {
     hillEl.pause();
-    hillEl.currentTime = 0;
   }
   if (portaoEl && portaoEl !== want) {
     portaoEl.pause();
-    portaoEl.currentTime = 0;
   }
   if (worldMapEl && worldMapEl !== want) {
     worldMapEl.pause();
-    worldMapEl.currentTime = 0;
   }
   // A mission that named its own track may be playing; a fixed theme has to silence it too.
   for (const el of fileEls.values()) {
     if (el === want) continue;
     el.pause();
-    el.currentTime = 0;
   }
   if (!want) return;
   kickPlay(want);
@@ -485,6 +489,7 @@ export function preloadMenuMusic(): void {
 
 export function playMenuMusic(): void {
   currentTheme = "intro";
+  currentFile = null;
   if (muted) return;
   battleEl?.pause();
   earlyEl?.pause();
@@ -497,11 +502,15 @@ export function playMenuMusic(): void {
   worldMapEl?.pause();
   const el = menuElement();
   if (!el) return;
+  // Returning to the title is another hard boundary: custom mission tracks must not linger.
+  pauseIntroTracks(el);
+  silenceAllBut(el);
   kickPlay(el);
 }
 
 export function startMusic(): void {
-  playTheme(currentTheme);
+  if (currentFile) playFile(currentFile);
+  else playTheme(currentTheme);
 }
 
 export function stopMusic(): void {
@@ -541,8 +550,7 @@ export function installAudioUnlock(): () => void {
   if (typeof window === "undefined") return () => {};
   const arm = () => {
     unlockAudio();
-    if (currentTheme === "intro") playMenuMusic();
-    else startMusic();
+    startMusic();
   };
   const opts: AddEventListenerOptions = { capture: true };
   window.addEventListener("pointerdown", arm, opts);

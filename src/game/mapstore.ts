@@ -17,6 +17,7 @@
 import { MISSIONS, TILE_CHAR, WORLD_LOCATIONS } from "./data";
 import SLOT_CONFIG from "./map-slots.json";
 import ORDER_CONFIG from "./map-order.json";
+import LOCATION_ORDER_CONFIG from "./location-order.json";
 import type { DecorationPlacement, Mission, Spawn, TerrainId, WinCondition, WorldLocation } from "./types";
 
 /** A spawn as edited in the Map Editor — the real Spawn shape plus a per-spawn test
@@ -205,6 +206,7 @@ export function missionById(id: string): Mission | undefined {
  * campaign mission be moved: those have no map file of their own to hold a locationId.
  * Anything not named anywhere keeps its shipped home, and follows the named ones. */
 const ORDER: Record<string, string[]> = ORDER_CONFIG;
+const LOCATION_ORDER = Array.isArray(LOCATION_ORDER_CONFIG) ? [...new Set(LOCATION_ORDER_CONFIG.filter((id): id is string => typeof id === "string"))] : [];
 
 /** Location a mission has been reassigned to, or undefined if it was never moved. */
 function assignedLocation(missionId: string): string | undefined {
@@ -218,6 +220,19 @@ function inChosenOrder(locationId: string, missionIds: string[]): string[] {
   const wanted = ORDER[locationId] ?? [];
   const first = wanted.filter((id) => missionIds.includes(id));
   return [...first, ...missionIds.filter((id) => !first.includes(id))];
+}
+
+/** Campaign progression may differ from map placement. This keeps the authored location
+ * sequence while leaving every marker at its own world-map coordinates. */
+function inLocationOrder(locations: WorldLocation[], wanted = LOCATION_ORDER): WorldLocation[] {
+  const byId = new Map(locations.map((location) => [location.id, location]));
+  const ordered = wanted.flatMap((id) => {
+    const location = byId.get(id);
+    if (!location) return [];
+    byId.delete(id);
+    return [location];
+  });
+  return [...ordered, ...locations.filter((location) => byId.has(location.id))];
 }
 
 /** The world map, with saved maps placed where they say they belong.
@@ -244,7 +259,7 @@ export const ALL_LOCATIONS: WorldLocation[] = (() => {
     const target = out.find((l) => l.id === locationId);
     if (target && !target.missionIds.includes(missionId)) target.missionIds.push(missionId);
   }
-  return out.map((l) => ({ ...l, missionIds: inChosenOrder(l.id, l.missionIds) }));
+  return inLocationOrder(out).map((l) => ({ ...l, missionIds: inChosenOrder(l.id, l.missionIds) }));
 })();
 
 /** Where a mission has been reassigned to, if anywhere — the editor shows this so a moved
@@ -262,13 +277,14 @@ export function missionsForLocation(loc: WorldLocation): Mission[] {
 }
 
 /** Applies an editor-saved Local order to the campaign that is already running. */
-export function locationsForOrder(order: Record<string, string[]>): WorldLocation[] {
+export function locationsForOrder(order: Record<string, string[]>, locationOrder: string[] = LOCATION_ORDER): WorldLocation[] {
   const assigned = new Set(Object.values(order).flat());
-  return ALL_LOCATIONS.map((loc) => {
+  const locations = ALL_LOCATIONS.map((loc) => {
     const chosen = order[loc.id] ?? [];
     const unchanged = loc.missionIds.filter((id) => !assigned.has(id) && !chosen.includes(id));
     return { ...loc, missionIds: [...chosen, ...unchanged] };
   });
+  return inLocationOrder(locations, locationOrder);
 }
 
 /** How many missions a location is meant to end up holding — the plan for it, set in the
