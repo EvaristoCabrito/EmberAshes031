@@ -132,7 +132,7 @@ export async function loadGameArt(): Promise<GameArt> {
   await Promise.all(
     SPRITES.map(async (id) => {
       const n = HERO_IDLE.has(id) ? 12 : 4;
-      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" ? "?v=sheet" : "";
+      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" ? "?v=sheet2" : "";
       sprites[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(`/game/sprites/${id}/${i + 1}.png${cacheBust}`)));
     }),
   );
@@ -144,8 +144,8 @@ export async function loadGameArt(): Promise<GameArt> {
     nira: { n: 4, bust: "" },
     voss: { n: 4, bust: "" },
     salazar: { n: 4, bust: "" },
-    malrec: { n: 5, bust: "?v=sheet" },
-    aldric: { n: 5, bust: "?v=sheet" },
+    malrec: { n: 5, bust: "?v=sheet2" },
+    aldric: { n: 5, bust: "?v=sheet2" },
     familiar: { n: 8, bust: "?v=6" },
     "ancient-golem": { n: 8, bust: "" },
     "morvenian-wolf": { n: 6, bust: "" },
@@ -176,8 +176,8 @@ export async function loadGameArt(): Promise<GameArt> {
   const WALK_FRAMES: Partial<Record<SpriteId, { n: number; bust: string }>> = {
     familiar: { n: 8, bust: "?v=6" },
     "ancient-golem": { n: 8, bust: "" },
-    malrec: { n: 6, bust: "?v=sheet" },
-    aldric: { n: 6, bust: "?v=sheet" },
+    malrec: { n: 6, bust: "?v=sheet2" },
+    aldric: { n: 6, bust: "?v=sheet2" },
   };
   const walks: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
   await Promise.all(
@@ -193,7 +193,7 @@ export async function loadGameArt(): Promise<GameArt> {
     DIR_LEFT.map(async (id) => {
       const walkN = WALK_FRAMES[id]?.n ?? 6;
       const atkN = ATTACK_FRAMES[id]?.n ?? 5;
-      const bust = "?v=sheet";
+      const bust = "?v=sheet2";
       walksLeft[id] = await Promise.all(Array.from({ length: walkN }, (_, i) => loadImage(`/game/sprites/${id}/move-left-${i + 1}.png${bust}`)));
       attacksLeft[id] = await Promise.all(Array.from({ length: atkN }, (_, i) => loadImage(`/game/sprites/${id}/atk-left-${i + 1}.png${bust}`)));
     }),
