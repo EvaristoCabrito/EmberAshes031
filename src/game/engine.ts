@@ -157,6 +157,8 @@ interface MissileFx {
   seed: number;
 }
 
+const HOUSE_DECORATION_IDS = new Set(["ruined-cottage", "broken-tower", "ruined-chapel", "abandoned-mansion", "burning-house", "burnt-house-ruins", "burning-hamlet", "small-house", "stone-hut"]);
+
 const MISSILE_FX_CAP = 12;
 /** A brief, code-drawn patch of fire on one affected Fireball hex. */
 interface FireballBurstFx {
@@ -698,7 +700,19 @@ export class BattleEngine {
       img.src = decorationImage(p.id);
       this.art.decorations[p.id] = img;
     }
-    // A decoration that names a tile (house, barricade, rocks) stamps that terrain so the
+    // Legacy house props previously stamped highruin beneath themselves. Houses are now purely
+    // transparent isometric art, so clear only that old auto-stamped terrain on their footprint.
+    const houseFloor: TerrainId = this.tiles.includes("nave") ? "nave" : "plains";
+    for (const p of this.decorations) {
+      if (!HOUSE_DECORATION_IDS.has(p.id)) continue;
+      for (const { dx, dy } of placedFootprint(p)) {
+        const x = p.x + dx;
+        const y = p.y + dy;
+        const index = y * this.cols + x;
+        if (x >= 0 && x < this.cols && y >= 0 && y < this.rows && this.tiles[index] === "highruin") this.tiles[index] = houseFloor;
+      }
+    }
+    // A decoration that names a tile (barricade, rocks) stamps that terrain so the
     // picture and the rules cannot disagree. A prop with no tile — chest, tree, fallen log —
     // sits on whatever hex was already painted. The old fallback to "column" is what made
     // trunks show up as marble pillars in playtest.
@@ -1783,7 +1797,7 @@ export class BattleEngine {
 
   private nudgeOffHazard(unit: Unit): void {
     const here = TERRAIN[tileAt(this.tiles, this.cols, unit.x, unit.y)];
-    if (here.passable && !here.hazardDice) return;
+    if (here.passable) return;
     const occ = occupancy(this.units);
     const seen = new Set<string>([key(unit.x, unit.y)]);
     const q: Point[] = [{ x: unit.x, y: unit.y }];
@@ -1796,7 +1810,7 @@ export class BattleEngine {
         seen.add(k);
         const terr = TERRAIN[tileAt(this.tiles, this.cols, n.x, n.y)];
         const who = occ.get(k);
-        if (terr.passable && !terr.hazardDice && (!who || who.id === unit.id)) {
+        if (terr.passable && (!who || who.id === unit.id)) {
           unit.x = n.x;
           unit.y = n.y;
           unit.drawX = n.x;

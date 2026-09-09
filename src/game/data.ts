@@ -7,7 +7,7 @@ export const TERRAIN: Record<TerrainId, TerrainDef> = {
   woods: { id: "woods", name: "Bosque", moveCost: 2, def: 1, atk: 0, passable: true },
   ruins: { id: "ruins", name: "Ruínas", moveCost: 1, def: 2, atk: 0, passable: true },
   water: { id: "water", name: "Água", moveCost: 99, def: 0, atk: 0, passable: false },
-  ember: { id: "ember", name: "Brasa", moveCost: 99, def: 0, atk: 0, passable: false },
+  ember: { id: "ember", name: "Brasa", moveCost: 2, def: 0, atk: 0, passable: true, hazardDice: 1, hazardFaces: 6 },
   hill: { id: "hill", name: "Barranco", moveCost: 2, def: 1, atk: 2, passable: true, height: 1 },
   flame: { id: "flame", name: "Chama", moveCost: 3, def: 0, atk: 0, passable: true, hazardDice: 1, hazardFaces: 8 },
   column: { id: "column", name: "Coluna", moveCost: 99, def: 0, atk: 0, passable: false, blocksShot: true },
@@ -71,6 +71,7 @@ export const FOOTPRINT_TYPE_7 = [
 
 const DECO_PAIR = [{ dx: 0, dy: 0 }, { dx: 1, dy: 0 }];
 const DECO_TRIO = [{ dx: 0, dy: 0 }, { dx: 1, dy: 0 }, { dx: 0, dy: -1 }];
+const DECO_QUAD = [{ dx: 0, dy: 0 }, { dx: 1, dy: 0 }, { dx: 2, dy: 0 }, { dx: 3, dy: 0 }];
 const DECO_ONE = [{ dx: 0, dy: 0 }];
 
 // Multi-hex terrain props: rendered as one image over their whole footprint instead of
@@ -82,11 +83,20 @@ export const DECORATIONS: Record<string, DecorationDef> = {
   "dense-forest": { id: "dense-forest", name: "Bosque Denso", footprint: DECO_PAIR, tile: "woods" },
   "broken-cliff-wall": { id: "broken-cliff-wall", name: "Muralha Rochosa Partida", footprint: DECO_PAIR, tile: "column" },
   "boulder-cluster": { id: "boulder-cluster", name: "Amontoado de Pedras", footprint: DECO_TRIO, tile: "column" },
-  "ruined-cottage": { id: "ruined-cottage", name: "Casa em Ruínas", footprint: DECO_PAIR, tile: "highruin" },
-  "broken-tower": { id: "broken-tower", name: "Torre Derrubada", footprint: DECO_PAIR, tile: "highruin" },
-  "ruined-chapel": { id: "ruined-chapel", name: "Capela em Ruínas", footprint: DECO_PAIR, tile: "highruin" },
-  "abandoned-mansion": { id: "abandoned-mansion", name: "Mansão Abandonada", footprint: DECO_TRIO, tile: "highruin" },
+  "ruined-cottage": { id: "ruined-cottage", name: "Casa em Ruínas", footprint: DECO_PAIR },
+  "broken-tower": { id: "broken-tower", name: "Torre Derrubada", footprint: DECO_PAIR },
+  "ruined-chapel": { id: "ruined-chapel", name: "Capela em Ruínas", footprint: DECO_PAIR },
+  "abandoned-mansion": { id: "abandoned-mansion", name: "Mansão Abandonada", footprint: DECO_TRIO },
   "stone-bridge": { id: "stone-bridge", name: "Ponte de Pedra", footprint: DECO_PAIR },
+  // Repeatable, static modules for the two outer edges of a bridge map.
+  "bridge-parapet-lower-001": { id: "bridge-parapet-lower-001", name: "Parapeito da Ponte — Baixo", footprint: DECO_PAIR },
+  "bridge-parapet-upper-001": { id: "bridge-parapet-upper-001", name: "Parapeito da Ponte — Cima", footprint: DECO_PAIR },
+  "exhibition-cages-001": { id: "exhibition-cages-001", name: "Gaiolas de Exposição", footprint: DECO_PAIR },
+  "exhibition-cages-002": { id: "exhibition-cages-002", name: "Gaiolas de Exposição II", footprint: DECO_PAIR },
+  "exhibition-cages-003": { id: "exhibition-cages-003", name: "Gaiolas de Exposição III", footprint: DECO_PAIR },
+  "exhibition-cages-004": { id: "exhibition-cages-004", name: "Gaiolas de Exposição IV", footprint: DECO_PAIR },
+  "exhibition-cages-005": { id: "exhibition-cages-005", name: "Gaiolas de Exposição V", footprint: DECO_PAIR },
+  "ember-channels-001": { id: "ember-channels-001", name: "Canais de Brasa", footprint: DECO_PAIR },
   "broken-wall-segment": { id: "broken-wall-segment", name: "Muralha em Ruínas", footprint: DECO_PAIR, tile: "column" },
   gatehouse: { id: "gatehouse", name: "Portão Fortificado", footprint: DECO_PAIR },
   watchtower: { id: "watchtower", name: "Torre de Vigia", footprint: DECO_PAIR },
@@ -106,8 +116,8 @@ export const DECORATIONS: Record<string, DecorationDef> = {
   "boulder-pile": { id: "boulder-pile", name: "Pilha de Pedras", footprint: DECO_PAIR, tile: "column" },
   "twin-spires": { id: "twin-spires", name: "Torres Gêmeas de Pedra", footprint: DECO_PAIR, tile: "column" },
   "large-boulder": { id: "large-boulder", name: "Pedregulho Grande", footprint: DECO_ONE, tile: "column" },
-  "burning-house": { id: "burning-house", name: "Casa em Chamas", footprint: DECO_ONE, tile: "highruin" },
-  "burnt-house-ruins": { id: "burnt-house-ruins", name: "Ruínas Queimadas", footprint: DECO_ONE, tile: "highruin" },
+  "burning-house": { id: "burning-house", name: "Casa em Chamas", footprint: DECO_ONE },
+  "burnt-house-ruins": { id: "burnt-house-ruins", name: "Ruínas Queimadas", footprint: DECO_ONE },
   well: { id: "well", name: "Poço", footprint: DECO_ONE },
   "stone-fountain": { id: "stone-fountain", name: "Fonte de Pedra", footprint: DECO_ONE },
   tombstones: { id: "tombstones", name: "Lápides", footprint: DECO_ONE },
@@ -118,7 +128,7 @@ export const DECORATIONS: Record<string, DecorationDef> = {
   "mossy-boulder": { id: "mossy-boulder", name: "Pedregulho Musgoso", footprint: DECO_ONE, tile: "column" },
   "mountain-range": { id: "mountain-range", name: "Cadeia de Montanhas", footprint: DECO_TRIO, tile: "hill" },
   "rune-stone": { id: "rune-stone", name: "Menir Rúnico", footprint: DECO_ONE },
-  "burning-hamlet": { id: "burning-hamlet", name: "Vilarejo em Chamas", footprint: DECO_PAIR, tile: "highruin" },
+  "burning-hamlet": { id: "burning-hamlet", name: "Vilarejo em Chamas", footprint: DECO_PAIR },
   "boulder-mound": { id: "boulder-mound", name: "Monte de Pedras", footprint: DECO_ONE, tile: "column" },
   "wooden-cart": { id: "wooden-cart", name: "Carroça de Madeira", footprint: DECO_ONE },
   "spike-crown": { id: "spike-crown", name: "Coroa de Espinhos", footprint: DECO_TRIO, tile: "column" },
@@ -171,8 +181,17 @@ export function decorationFacing(id: string, rot: number, has: (file: string) =>
   return { file: id, mirror: false, own: false, step, side: step + 1 };
 }
 
+/** Source generations remain intact. These recent decorations render their non-destructive
+ * alpha-clean siblings, so the baked white checkerboard never reaches the game canvas. */
+const DECORATION_ALPHA_CLEAN = new Set([
+  "bridge-parapet-lower-001", "bridge-parapet-upper-001", "ember-channels-001",
+  "exhibition-cages-001", "exhibition-cages-002", "exhibition-cages-003",
+  "exhibition-cages-004", "exhibition-cages-005",
+]);
+
 export function decorationImage(id: string): string {
-  return `/game/decorations/${id}.png${
+  const file = DECORATION_ALPHA_CLEAN.has(id) ? `${id}-alpha-001` : id;
+  return `/game/decorations/${file}.png${
     id === "locked-chest"
       ? "?v=4"
       : id === "dead-tree" ||
@@ -2373,6 +2392,7 @@ export function terrainNote(id: TerrainId): string | undefined {
   if (t.id === "chest") return "trancado · precisa de Gazua para abrir · pode conter Ember";
   if (t.id === "door") return "trancada · precisa de Gazua para abrir";
   if (t.id === "void") return "vazio · não se atravessa, não se vê através · apaga o terreno pra fechar áreas indoor";
+  if (t.hazardDice) return `${t.name} · atravessável · custa ${t.moveCost} Mov · dano ${t.hazardDice}D${t.hazardFaces ?? 8} ao entrar e no início de cada turno`;
   return undefined;
 }
 

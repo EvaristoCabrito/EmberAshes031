@@ -1,8 +1,8 @@
 /** Maps authored in the Map Editor, saved as real files under src/game/maps/.
  *
  * The editor's "Salvar" posts a draft to the dev-only route in
- * scripts/map-save-plugin.mjs, which writes src/game/maps/<id>-<serial>.json —
- * "vau-001.json", "vau-002.json", "misty-cave-001.json". Serials are never
+ * scripts/map-save-plugin.mjs, which writes src/game/maps/<id><serial>.json —
+ * "vau001.json", "vau002.json", "misty-cave001.json". Serials are never
  * overwritten: each save appends the next number, so an edit can always be
  * rolled back to an earlier one by deleting the newer file.
  *
@@ -74,6 +74,9 @@ export interface MapFile {
   serial: number;
   savedAt: number;
   draft: MapDraft;
+  /** Actual repository filename. Older saves used `id-###.json`; preserve it so
+   * the editor can still display and delete those files accurately. */
+  file?: string;
 }
 
 export function draftToMission(d: MapDraft): Mission {
@@ -113,17 +116,27 @@ export function serialLabel(serial: number): string {
 }
 
 export function mapFileName(id: string, serial: number): string {
-  return `${id}-${serialLabel(serial)}.json`;
+  return `${id}${serialLabel(serial)}.json`;
 }
 
 const MAP_MODULES = import.meta.glob<MapFile>("./maps/*.json", { eager: true, import: "default" });
+
+/** Keep the source filename alongside imported JSON. This makes the filename migration
+ * non-destructive: new saves use id###, while old id-### saves remain manageable. */
+export function savedMapFiles(): MapFile[] {
+  return Object.entries(MAP_MODULES).flatMap(([path, file]) => {
+    if (!file || typeof file !== "object") return [];
+    const name = path.split("/").pop();
+    return [{ ...file, file: name }];
+  });
+}
 
 /** Every saved file, newest serial per scenario id. Two files for the same id (vau-001,
  * vau-002) are the same scenario twice — the higher serial is the one that plays, the
  * lower stays on disk as the rollback. */
 function latestPerScenario(): Map<string, MapFile> {
   const best = new Map<string, MapFile>();
-  for (const file of Object.values(MAP_MODULES)) {
+  for (const file of savedMapFiles()) {
     if (!file || typeof file !== "object" || !file.draft?.id) continue;
     const current = best.get(file.draft.id);
     if (!current || file.serial > current.serial) best.set(file.draft.id, file);
@@ -139,7 +152,7 @@ export const SAVED_MISSIONS: Mission[] = [...LATEST.values()].map((f) => draftTo
 /** Every saved version on disk for one scenario id, oldest serial first — what the
  * editor lists so an earlier save can be reopened. */
 export function savedVersionsFor(id: string): MapFile[] {
-  return Object.values(MAP_MODULES)
+  return savedMapFiles()
     .filter((f): f is MapFile => !!f && typeof f === "object" && f.draft?.id === id)
     .sort((a, b) => a.serial - b.serial);
 }
@@ -155,7 +168,7 @@ export function latestSerialFor(id: string): number {
  * there and the editor offered no way to find them. */
 export function savedScenarios(): { id: string; files: number; latest: number }[] {
   const counts = new Map<string, number>();
-  for (const file of Object.values(MAP_MODULES)) {
+  for (const file of savedMapFiles()) {
     if (!file || typeof file !== "object" || !file.draft?.id) continue;
     counts.set(file.draft.id, (counts.get(file.draft.id) ?? 0) + 1);
   }
@@ -243,8 +256,19 @@ export function locationForMission(missionId: string): WorldLocation | undefined
 }
 
 export function missionsForLocation(loc: WorldLocation): Mission[] {
-  const live = ALL_LOCATIONS.find((l) => l.id === loc.id) ?? loc;
-  return live.missionIds.map((id) => missionById(id)).filter((m): m is Mission => !!m);
+  // The caller may hold a campaign order just saved by the editor. Respect that supplied
+  // location rather than replacing it with the module's startup snapshot.
+  return loc.missionIds.map((id) => missionById(id)).filter((m): m is Mission => !!m);
+}
+
+/** Applies an editor-saved Local order to the campaign that is already running. */
+export function locationsForOrder(order: Record<string, string[]>): WorldLocation[] {
+  const assigned = new Set(Object.values(order).flat());
+  return ALL_LOCATIONS.map((loc) => {
+    const chosen = order[loc.id] ?? [];
+    const unchanged = loc.missionIds.filter((id) => !assigned.has(id) && !chosen.includes(id));
+    return { ...loc, missionIds: [...chosen, ...unchanged] };
+  });
 }
 
 /** How many missions a location is meant to end up holding — the plan for it, set in the

@@ -36,6 +36,8 @@ export const ORDER_FILE = join("src", "game", "map-order.json");
 /** Deletes one saved map file — the editor's way to throw away a version it created.
  * Saves only ever stack up, so without this the folder is write-only. */
 export const MAP_DELETE_ROUTE = "/__map-delete";
+/** Lists the actual map files on disk for one Map ID. */
+export const MAP_LIST_ROUTE = "/__map-list";
 
 /** A scenario id is a file name, so it may only hold characters that are safe in one —
  * this is what stops a crafted id from writing outside the maps folder. */
@@ -43,7 +45,7 @@ export function isSafeMapId(id) {
   return typeof id === "string" && id.length > 0 && id.length <= 64 && /^[a-z0-9][a-z0-9-]*$/.test(id);
 }
 
-/** The next unused serial for a scenario: one past the highest `<id>-NNN.json`
+/** The next unused serial for a scenario: one past the highest `<id>NNN.json`
  * already on disk, so saves stack up instead of clobbering each other. */
 export function nextSerial(dir, id) {
   let highest = 0;
@@ -53,7 +55,10 @@ export function nextSerial(dir, id) {
   } catch {
     return 1;
   }
-  const pattern = new RegExp(`^${id}-(\\d{3})\\.json$`);
+  // Accept the former id-### form while migrating; writes below use the compact
+  // id### convention and therefore can never overwrite an older save.
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^${escapedId}(?:-)?(\\d{3})\\.json$`);
   for (const name of entries) {
     const match = pattern.exec(name);
     if (match) highest = Math.max(highest, Number(match[1]));
@@ -61,13 +66,12 @@ export function nextSerial(dir, id) {
   return highest + 1;
 }
 
-/** A name this route is allowed to delete: exactly what a save writes — a safe id, a
- * three-digit serial, `.json`. No path separators can survive it, so the name can never
+/** A name this route is allowed to delete: the current id### form or the compatible
+ * former id-### form. No path separators can survive it, so the name can never
  * reach outside the maps folder, and README.md and anything hand-added is not matchable. */
 export function isSavedMapFile(name) {
   if (typeof name !== "string") return false;
-  const match = /^([a-z0-9][a-z0-9-]*)-\d{3}\.json$/.exec(name);
-  return !!match && isSafeMapId(match[1]);
+  return /^[a-z0-9][a-z0-9-]*?(?:-)?\d{3}\.json$/.test(name);
 }
 
 function readBody(req, limitBytes) {
@@ -99,9 +103,20 @@ function readBack(file) {
 }
 
 export function mapSavePlugin() {
+  let watchedMapsDir = "";
   return {
     name: "ember:map-save",
     apply: "serve",
+    configResolved(config) {
+      watchedMapsDir = join(config.root, MAPS_DIR).replaceAll("\\", "/");
+    },
+    // Map JSONs are written by this plugin. They are listed by the editor directly after
+    // the confirmed response, so reloading the whole game here only throws the author out
+    // of the editor without making the save safer.
+    handleHotUpdate(ctx) {
+      const changed = ctx.file.replaceAll("\\", "/");
+      if (watchedMapsDir && changed.startsWith(`${watchedMapsDir}/`) && changed.endsWith(".json")) return [];
+    },
     configureServer(server) {
       const dir = join(server.config.root, MAPS_DIR);
       const slotsPath = join(server.config.root, SLOTS_FILE);
@@ -112,7 +127,9 @@ export function mapSavePlugin() {
         const isSlots = pathOnly === SLOTS_SAVE_ROUTE;
         const isOrder = pathOnly === ORDER_SAVE_ROUTE;
         const isDelete = pathOnly === MAP_DELETE_ROUTE;
-        if ((!isMap && !isSlots && !isOrder && !isDelete) || (req.method ?? "GET").toUpperCase() !== "POST") {
+        const isList = pathOnly === MAP_LIST_ROUTE;
+        const method = (req.method ?? "GET").toUpperCase();
+        if ((!isMap && !isSlots && !isOrder && !isDelete && !isList) || (isList ? method !== "GET" : method !== "POST")) {
           next();
           return;
         }
@@ -124,6 +141,31 @@ export function mapSavePlugin() {
           res.setHeader("content-length", String(body.byteLength));
           res.end(body);
         };
+        if (isList) {
+          const id = new URL(req.url ?? "", "http://localhost").searchParams.get("id") ?? "";
+          if (id && !isSafeMapId(id)) {
+            reply(400, { ok: false, error: "id inválido" });
+            return;
+          }
+          let names = [];
+          try { names = readdirSync(dir).filter(isSavedMapFile); } catch { /* an empty folder is valid */ }
+          const allFiles = names
+            .map((name) => ({ ...(readBack(join(dir, name)) ?? {}), file: name }))
+            .filter((entry) => entry?.draft?.id)
+            .sort((a, b) => Number(a.serial ?? 0) - Number(b.serial ?? 0));
+          if (!id) {
+            const latest = new Map();
+            for (const entry of allFiles) latest.set(entry.draft.id, entry);
+            const scenarios = [...latest.values()]
+              .map((entry) => ({ id: entry.draft.id, title: entry.draft.title || entry.draft.id, index: Number(entry.draft.index ?? 0) }))
+              .sort((a, b) => a.title.localeCompare(b.title));
+            reply(200, { ok: true, scenarios });
+            return;
+          }
+          const files = allFiles.filter((entry) => entry.draft.id === id);
+          reply(200, { ok: true, files });
+          return;
+        }
         readBody(req, 8 * 1024 * 1024)
           .then((raw) => {
             if (isOrder) {
@@ -175,7 +217,7 @@ export function mapSavePlugin() {
             }
             mkdirSync(dir, { recursive: true });
             const serial = nextSerial(dir, draft.id);
-            const file = `${draft.id}-${String(serial).padStart(3, "0")}.json`;
+            const file = `${draft.id}${String(serial).padStart(3, "0")}.json`;
             const full = join(dir, file);
             writeFileSync(full, JSON.stringify({ serial, savedAt: Date.now(), draft }, null, 2) + "\n", "utf8");
             reply(200, { ok: true, serial, file: `${MAPS_DIR}/${file}`, bytes: statSync(full).size });

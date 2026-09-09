@@ -3,6 +3,5 @@
  * bump in package.json moves the screen too — no second copy to forget. */
 export const APP_VERSION = __APP_VERSION__;
 
-// Keep the title stamp explicit so a running dev session shows the release being tested
-// immediately; package.json remains 0.281.0, the matching build version.
-export const DISPLAY_VERSION = "0.281";
+/** Title-screen form of package.json's semver: 0.282.0 becomes 0.282. */
+export const DISPLAY_VERSION = APP_VERSION.replace(/\.0$/, "");

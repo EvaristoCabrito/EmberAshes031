@@ -11,7 +11,7 @@ import { BattleEngine } from "./engine";
 import { MapPreviewCanvas } from "./MapPreviewCanvas";
 import { WorldMapScreen } from "./WorldMapScreen";
 import { DISPLAY_VERSION } from "./version";
-import { ALL_LOCATIONS, ALL_MISSIONS, LOCATION_SLOTS, draftToMission, latestSerialFor, locationFill, locationForMission, mapFileName, missionById, missionsForLocation, latestSavedDraft, savedScenarios, savedVersionsFor, serialLabel, slotsFor, type MapDraft, type DraftSpawn } from "./mapstore";
+import { ALL_LOCATIONS, ALL_MISSIONS, LOCATION_SLOTS, draftToMission, latestSerialFor, locationFill, locationForMission, locationsForOrder, mapFileName, missionById, missionsForLocation, latestSavedDraft, savedScenarios, savedVersionsFor, serialLabel, slotsFor, type MapDraft, type MapFile, type DraftSpawn } from "./mapstore";
 import {
   activeSave,
   emptySave,
@@ -27,6 +27,25 @@ import {
 } from "./save";
 import type { ClassId, EquipSlot, GameArt, GrowthLine, HudSnapshot, Mission, PotionId, SaveBank, SaveData, ScreenId, SpellKind, Spawn, TerrainId, UnitPublic, WinCondition, WorldLocation } from "./types";
 
+/** A map JSON write updates Vite's module list and can reload the app. This one-shot
+ * snapshot restores the editor instead of sending the author to the title screen. */
+const EDITOR_RESUME_KEY = "ember:editor-resume";
+function readEditorResume(): MapDraft | null {
+  try {
+    const raw = window.sessionStorage.getItem(EDITOR_RESUME_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw) as MapDraft;
+    return typeof draft?.id === "string" && Array.isArray(draft.tiles) ? draft : null;
+  } catch {
+    return null;
+  }
+}
+function armEditorResume(draft: MapDraft): void {
+  try { window.sessionStorage.setItem(EDITOR_RESUME_KEY, JSON.stringify(draft)); } catch { /* saving still proceeds */ }
+}
+function clearEditorResume(): void {
+  try { window.sessionStorage.removeItem(EDITOR_RESUME_KEY); } catch { /* storage is optional */ }
+}
 function hudBlank(): HudSnapshot {
   return {
     phase: "player",
@@ -325,7 +344,8 @@ function slotCount(action: SlotAction, unit: UnitPublic): number {
 }
 
 export function GameApp() {
-  const [screen, setScreen] = useState<ScreenId>("title");
+  const [resumeEditorDraft] = useState<MapDraft | null>(() => (typeof window === "undefined" ? null : readEditorResume()));
+  const [screen, setScreen] = useState<ScreenId>(() => (resumeEditorDraft ? "mapEditor" : "title"));
   const [bank, setBank] = useState<SaveBank>(() => (typeof window === "undefined" ? { version: 7, lastSlot: 0, muted: false, slots: [null, null, null, null, null] } : loadBank()));
   const save = activeSave(bank);
   const [art, setArt] = useState<GameArt | null>(null);
@@ -344,6 +364,26 @@ export function GameApp() {
   // map opens with that location's chapter list already popped open instead of the bare
   // map, so a multi-mission location plays as one continuous series of combats.
   const [openLocationOnMap, setOpenLocationOnMap] = useState<string | null>(null);
+  const [campaignLocations, setCampaignLocations] = useState<WorldLocation[]>(() => ALL_LOCATIONS);
+  useEffect(() => {
+    const applySavedLocations = (event: Event) => {
+      const order = (event as CustomEvent<Record<string, string[]>>).detail;
+      if (order && typeof order === "object") setCampaignLocations(locationsForOrder(order));
+    };
+    window.addEventListener("ember:locations-saved", applySavedLocations);
+    return () => window.removeEventListener("ember:locations-saved", applySavedLocations);
+  }, []);  const campaignMissions = useMemo(() => {
+    const used = new Set<string>();
+    const ordered = campaignLocations.flatMap((loc) =>
+      loc.missionIds.flatMap((id) => {
+        const mission = missionById(id);
+        if (!mission || used.has(mission.id)) return [];
+        used.add(mission.id);
+        return [mission];
+      }),
+    );
+    return [...ordered, ...ALL_MISSIONS.filter((mission) => !used.has(mission.id))];
+  }, [campaignLocations]);
   const [testMode, setTestMode] = useState(false);
   const [testEmber, setTestEmber] = useState(TEST_EMBER);
   const awardedRef = useRef<string | null>(null);
@@ -389,9 +429,13 @@ export function GameApp() {
   const [customMission, setCustomMission] = useState<Mission | null>(null);
   /** The map open in the Map Editor, kept out here so a playtest — which unmounts that
    * screen — does not discard it. */
-  const editorDraft = useRef<MapDraft | null>(null);
+  const editorDraft = useRef<MapDraft | null>(resumeEditorDraft);
   const mission = customMission && customMission.id === missionId ? customMission : missionId ? resolveMission(missionId) : undefined;
   const hasProgress = hasAnySave(bank);
+
+  useEffect(() => {
+    if (resumeEditorDraft) clearEditorResume();
+  }, [resumeEditorDraft]);
 
   const applySlot = (next: SaveBank) => {
     setBank(next);
@@ -778,7 +822,7 @@ export function GameApp() {
           onDraftChange={(d) => {
             editorDraft.current = d;
           }}
-          onBack={() => setScreen("testMenu")}
+          onBack={() => { clearEditorResume(); setScreen("testMenu"); }}
           onPlaytest={(m, playerLevels, enemyLevels) => {
             setCustomMission(m);
             startBattle(m.id, {}, m, playerLevels, enemyLevels);
@@ -788,6 +832,7 @@ export function GameApp() {
 
       {screen === "campaign" && (
         <CampaignScreen
+          missions={campaignMissions}
           completed={save.completed}
           test={testMode}
           ember={testMode ? testEmber : (save.ember ?? 0)}
@@ -798,7 +843,7 @@ export function GameApp() {
 
       {screen === "worldMap" && (
         <WorldMapScreen
-          locations={ALL_LOCATIONS}
+          locations={campaignLocations}
           status={(loc) => locationStatus(loc, save.completed, testMode)}
           missionStatus={(id) => missionStatus(id, save.completed, testMode)}
           ember={testMode ? testEmber : (save.ember ?? 0)}
@@ -1738,6 +1783,20 @@ const EDITOR_ROWS_DEFAULT = 8;
  * with, without being maxed out. */
 const DEFAULT_TEST_LEVEL = 10;
 
+/** One canonical scenario prefix everywhere: the editor's ID becomes the exact file prefix.
+ * `Vau 01` therefore saves as `vau-01001.json` only if the author actually made the ID
+ * `vau-01`; the trailing three digits are always the generated save serial. */
+function normalizeScenarioId(value: string): string {
+  const id = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return id || "scenario";
+}
+
 function blankDraft(): MapDraft {
   return {
     id: `custom-${Date.now().toString(36)}`,
@@ -1882,7 +1941,7 @@ function saveVersionStore(store: Record<string, MapVersion[]>): boolean {
   }
 }
 
-/** Writes the draft to src/game/maps/<id>-<serial>.json through the dev server's
+/** Writes the draft to src/game/maps/<id><serial>.json through the dev server's
  * /__map-save route (scripts/map-save-plugin.mjs). Only reachable while `npm run dev`
  * is running — a built/deployed app has no repo to write to, and falls back to the
  * browser-local store below. */
@@ -1891,7 +1950,7 @@ async function saveMapToRepo(draft: MapDraft): Promise<{ ok: true; serial: numbe
     const res = await fetch("/__map-save", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(draft),
+      body: JSON.stringify({ ...draft, id: normalizeScenarioId(draft.id) }),
     });
     const body = (await res.json()) as { ok?: boolean; serial?: number; file?: string; error?: string };
     if (!res.ok || !body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status}` };
@@ -2061,10 +2120,11 @@ function terrainHint(t: TerrainId, variant?: number): string {
   const d = TERRAIN[t];
   // Which art file this cell actually paints with. Two variants of one terrain are
   // identical in every rule below, so the name is the only thing that tells them apart.
-  const head = variant == null ? d.name : `${d.name} · ${tileVariantName(t, variant)}`;
+  const label = variant == null ? null : (VARIANT_LABEL[t]?.[variant] ?? tileVariantName(t, variant));
+  const head = d.name;
   const parts = [head, d.passable ? `Mov ${d.moveCost}` : "Intransponível", `Def +${d.def}`, `Atk +${d.atk}`];
   if (d.blocksShot) parts.push("bloqueia tiro/visão");
-  if (d.hazardDice) parts.push(`dano ${d.hazardDice}D${d.hazardFaces} por turno parado`);
+  if (d.hazardDice) parts.push(`dano ${d.hazardDice}D${d.hazardFaces} ao entrar e a cada turno`);
   const note = terrainNote(t);
   return note ? `${parts.join(" · ")} — ${note}` : parts.join(" · ");
 }
@@ -2165,6 +2225,7 @@ function MapEditorScreen({
   const [turning, setTurning] = useState(false);
   const [turningDeco, setTurningDeco] = useState(false);
   const [decoBrush, setDecoBrush] = useState<string>(Object.keys(DECORATIONS)[0]!);
+  const [decoSection, setDecoSection] = useState("Todas");
   const [mode, setMode] = useState<"paint" | "player" | "enemy" | "summon" | "decoration">("paint");
   // Which summon class the "Invocação" brush drops. Summons live in playerSpawns alongside
   // the heroes — the class itself says which of the two a spawn is (isSummonClass), so
@@ -2249,8 +2310,31 @@ function MapEditorScreen({
 
   const versions = versionStore[draft.id] ?? [];
   const [armedDelete, setArmedDelete] = useState("");
-  const repoFiles = savedVersionsFor(draft.id);
-  const repoLatest = latestSerialFor(draft.id);
+  const removeFromLocation = (locationId: string, missionId: string) => {
+    const key = `location:${locationId}:${missionId}`;
+    if (armedDelete !== key) {
+      setArmedDelete(key);
+      setNote(`Remover? Clique de novo para tirar este mapa de Locais. O arquivo do mapa não será apagado.`);
+      return;
+    }
+    setArmedDelete("");
+    setOrder((current) => ({ ...current, [locationId]: (current[locationId] ?? []).filter((id) => id !== missionId) }));
+    setNote(`Mapa removido deste Local. Clique Salvar em Locais para gravar a campanha.`);
+  };
+  const [repoFiles, setRepoFiles] = useState<MapFile[]>(() => savedVersionsFor(draft.id));
+  const refreshRepoFiles = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/__map-list?id=${encodeURIComponent(id)}`);
+      const body = (await response.json()) as { ok?: boolean; files?: MapFile[] };
+      if (!response.ok || !body.ok || !Array.isArray(body.files)) throw new Error("lista indisponível");
+      setRepoFiles(body.files);
+    } catch {
+      // Built releases have no dev-only endpoint. Their static list is still useful.
+      setRepoFiles(savedVersionsFor(id));
+    }
+  }, []);
+  useEffect(() => { void refreshRepoFiles(draft.id); }, [draft.id, refreshRepoFiles]);
+  const repoLatest = repoFiles.reduce((latest, file) => Math.max(latest, file.serial), 0);
   /** Every scenario the picker can open, from either store. Files on disk are the real
    * saves — a map authored offline exists only there — so they lead; a scenario that
    * lives only in this browser (no dev server when it was saved) still gets a row. */
@@ -2262,6 +2346,21 @@ function MapEditorScreen({
     }
     return rows.sort((a, b) => byName(a.id, b.id));
   })();
+  const [savedLocationMaps, setSavedLocationMaps] = useState<{ id: string; title: string; index: number }[]>(() =>
+    savedScenarios().map((scenario) => ({ id: scenario.id, title: latestSavedDraft(scenario.id)?.title ?? scenario.id, index: latestSavedDraft(scenario.id)?.index ?? 0 })),
+  );
+  const refreshSavedLocationMaps = useCallback(async () => {
+    try {
+      const response = await fetch("/__map-list");
+      const body = (await response.json()) as { ok?: boolean; scenarios?: { id: string; title: string; index: number }[] };
+      if (!response.ok || !body.ok || !Array.isArray(body.scenarios)) return;
+      setSavedLocationMaps(body.scenarios);
+    } catch {
+      // The static list stays usable outside the local dev server.
+    }
+  }, []);
+  useEffect(() => { void refreshSavedLocationMaps(); }, [refreshSavedLocationMaps]);
+
   const [slots, setSlots] = useState<Record<string, number>>(LOCATION_SLOTS);
 
   /** Declares how many missions a location is meant to hold, so the editor can show what
@@ -2308,6 +2407,7 @@ function MapEditorScreen({
       const sl = await post("/__map-slots", slots);
       const locais = Object.keys((o.onDisk as Record<string, unknown>) ?? {}).length;
       const vagas = Object.keys((sl.onDisk as Record<string, unknown>) ?? {}).length;
+      window.dispatchEvent(new CustomEvent("ember:locations-saved", { detail: order }));
       setBigNote({
         ok: true,
         title: "ESTÁ SALVO",
@@ -2639,24 +2739,30 @@ function MapEditorScreen({
     }
   };
 
-  /** Saves the map as a file in the repo — src/game/maps/<id>-<serial>.json — and keeps
+  /** Saves the map as a file in the repo — src/game/maps/<id><serial>.json — and keeps
    * a browser-local copy as the fallback for when the dev server isn't there to write
    * one (a built app, a deployed preview). Whichever path ran is what the note says: a
    * save that didn't happen never reports success. */
   const doSave = async () => {
-    const list = versionStore[draft.id] ?? [];
+    const canonicalId = normalizeScenarioId(draft.id);
+    const savedDraft = canonicalId === draft.id ? draft : { ...draft, id: canonicalId };
+    if (savedDraft !== draft) setDraft(savedDraft);
+    const list = versionStore[savedDraft.id] ?? [];
     const localSerial = (list[list.length - 1]?.serial ?? 0) + 1;
-    const next = { ...versionStore, [draft.id]: [...list, { serial: localSerial, draft, savedAt: Date.now() }] };
+    const next = { ...versionStore, [savedDraft.id]: [...list, { serial: localSerial, draft: savedDraft, savedAt: Date.now() }] };
     setVersionStore(next);
     const localOk = saveVersionStore(next);
 
-    const repo = await saveMapToRepo(draft);
+    armEditorResume(savedDraft);
+    const repo = await saveMapToRepo(savedDraft);
     if (repo.ok) {
-      setNote(`Salvo em ${repo.file} — recarregue pra ver "${draft.title}" no jogo.`);
+      await refreshRepoFiles(savedDraft.id);
+      await refreshSavedLocationMaps();
+      setNote(`Salvo em ${repo.file}.`);
       return;
     }
     if (localOk) {
-      setNote(`Sem servidor de dev: salvo só neste navegador como ${serialLabel(localSerial)} de "${draft.id}" (${repo.error}). Use Ativar pra valer pra campanha.`);
+      setNote(`Sem servidor de dev: salvo só neste navegador como ${serialLabel(localSerial)} de "${savedDraft.id}" (${repo.error}). Use Ativar pra valer pra campanha.`);
       return;
     }
     setNote(`NÃO SALVOU: nem arquivo (${repo.error}) nem navegador. O mapa só existe nesta tela — exporte antes de sair.`);
@@ -2668,6 +2774,21 @@ function MapEditorScreen({
     setCopyOk(false);
   };
 
+  /** Copies one browser-local version into src/game/maps/ without overwriting it.
+   * The dev route assigns the next ID### serial on disk. */
+  const doSendVersionToRepo = async (version: MapVersion) => {
+    armEditorResume(version.draft);
+    const repo = await saveMapToRepo(version.draft);
+    if (repo.ok) {
+      await refreshRepoFiles(version.draft.id);
+      await refreshSavedLocationMaps();
+    }
+    setNote(
+      repo.ok
+        ? `v${serialLabel(version.serial)} enviada ao repositório como ${repo.file}.`
+        : `NÃO ENVIOU v${serialLabel(version.serial)} ao repositório: ${repo.error}`,
+    );
+  };
   const doActivate = (serial: number) => {
     const selected = (versionStore[draft.id] ?? []).find((version) => version.serial === serial);
     if (!selected) {
@@ -2697,22 +2818,21 @@ function MapEditorScreen({
 
   /** Select an existing repository file directly for campaign play. It does not write a
    * replacement file: activation is a local campaign pointer to this exact draft. */
-  const doActivateFile = (f: { serial: number; draft: MapDraft }) => {
+  const doActivateFile = (f: { serial: number; draft: MapDraft; file?: string }) => {
     const next = { ...activeVersions, [draft.id]: f.serial };
     if (!saveActiveDrafts({ ...loadActiveDrafts(), [draft.id]: f.draft })) {
-      setNote(`NÃO ATIVOU ${mapFileName(draft.id, f.serial)}: o navegador recusou salvar a cópia da campanha.`);
+      setNote(`NÃO ATIVOU ${f.file ?? mapFileName(draft.id, f.serial)}: o navegador recusou salvar a cópia da campanha.`);
       return;
     }
     setActiveVersions(next);
     saveActiveVersions(next);
     setDraft(f.draft);
-    setNote(`${mapFileName(draft.id, f.serial)} agora é a cópia exata ativa na campanha.`);
+    setNote(`${f.file ?? mapFileName(draft.id, f.serial)} agora é a cópia exata ativa na campanha.`);
   };
 
   /** Deletes a saved file. Two clicks: the first arms the button, so a misclick on a
    * row does not throw away a version that has no undo. */
-  const doDeleteFile = async (serial: number) => {
-    const name = mapFileName(draft.id, serial);
+  const doDeleteFile = async (name: string) => {
     if (armedDelete !== name) {
       setArmedDelete(name);
       setNote(`Clique de novo no X pra apagar ${name} — isso não tem volta.`);
@@ -2720,10 +2840,19 @@ function MapEditorScreen({
     }
     setArmedDelete("");
     const res = await deleteMapFile(name);
+    if (res.ok) await refreshRepoFiles(draft.id);
     setNote(res.ok ? `${name} apagado.` : `NÃO APAGOU ${name}: ${res.error}`);
   };
 
+  /** Browser-local versions need the same two-click confirmation as repository files. */
   const doDeleteVersion = (serial: number) => {
+    const key = `local:${draft.id}:${serial}`;
+    if (armedDelete !== key) {
+      setArmedDelete(key);
+      setNote(`Erase? Clique de novo para apagar a versão local v${serialLabel(serial)} — isso não tem volta.`);
+      return;
+    }
+    setArmedDelete("");
     const list = (versionStore[draft.id] ?? []).filter((v) => v.serial !== serial);
     const next = { ...versionStore, [draft.id]: list };
     if (list.length === 0) delete next[draft.id];
@@ -2739,6 +2868,15 @@ function MapEditorScreen({
   const classOptions = (Object.keys(CLASSES) as ClassId[]).sort((a, b) => byName(CLASSES[a].name, CLASSES[b].name));
   const summonOptions = [...SUMMON_CLASSES].sort((a, b) => byName(CLASSES[a].name, CLASSES[b].name));
   const decorOptions = Object.values(DECORATIONS).sort((a, b) => byName(a.name, b.name));
+  const decorationSectionFor = (id: string) => {
+    if (id.includes("bridge") || id.includes("midspan") || id.includes("exhibition-cages") || id.includes("ember-channels")) return "Pontes";
+    if (id.includes("mountain") || id.includes("ridge") || id.includes("rock") || id.includes("boulder") || id.includes("spike") || id.includes("cliff")) return "Pedras e relevo";
+    if (id.includes("tree") || id.includes("forest") || id.includes("wood") || id.includes("log") || id.includes("mossy")) return "Natureza";
+    if (id.includes("ruined") || id.includes("tower") || id.includes("mansion") || id.includes("wall") || id.includes("gate") || id.includes("shrine") || id.includes("house") || id.includes("hut") || id.includes("hamlet")) return "Ruínas e construções";
+    return "Objetos";
+  };
+  const decorationSections = ["Todas", "Pontes", "Pedras e relevo", "Ruínas e construções", "Natureza", "Objetos"];
+  const visibleDecorOptions = decoSection === "Todas" ? decorOptions : decorOptions.filter((dec) => decorationSectionFor(dec.id) === decoSection);
 
   /** Whatever unit stands on a cell, across all three spawn lists. */
   const spawnAt = (x: number, y: number) => {
@@ -2876,7 +3014,7 @@ function MapEditorScreen({
             <input
               className="bg-bg border border-border rounded-md px-2 py-1.5"
               value={draft.id}
-              onChange={(e) => setDraft((d) => ({ ...d, id: e.target.value.replace(/[^a-z0-9-]/gi, "") }))}
+              onChange={(e) => setDraft((d) => ({ ...d, id: normalizeScenarioId(e.target.value) }))}
             />
           </label>
           <label className="flex flex-col gap-1">
@@ -3169,9 +3307,10 @@ function MapEditorScreen({
               O dado em cada uma liga/desliga se ela pode sair no sorteio de "Gerar terreno" — aceso participa, apagado só
               entra no mapa se você colocar à mão.
             </p>
+
             <div className="overflow-x-auto overflow-y-hidden border border-border rounded-md p-1.5 bg-bg/40 h-28 min-h-[104px] min-w-[280px] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
               <div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-1.5">
-                {decorOptions.map((dec) => {
+                {visibleDecorOptions.map((dec) => {
                   const excluded = shuffleExclude.has(dec.id);
                   return (
                     <div
@@ -3278,7 +3417,14 @@ function MapEditorScreen({
               <img src={tileVariantSrc(brush, variant)} alt="" className="size-5 rounded-sm object-cover" />
               Substituir base
             </Button>
-            <Button
+            <label className="flex items-center gap-1 rounded-md border border-border bg-bg px-2 py-1 text-xs" title="Categoria atualmente exibida na paleta de decorações">
+              <span className="text-muted">Decorações</span>
+              <select className="max-w-36 bg-transparent text-fg outline-none" value={decoSection} onChange={(e) => setDecoSection(e.target.value)}>
+                {decorationSections.map((section) => (
+                  <option key={section} value={section}>{section}</option>
+                ))}
+              </select>
+            </label>            <Button
               size="sm"
               variant={showPreview ? "quiet" : "ghost"}
               onClick={() => {
@@ -3513,6 +3659,7 @@ function MapEditorScreen({
           );
         })}
 
+
         <div className="flex flex-col gap-1.5">
           <p className="text-xs uppercase tracking-wide text-muted">
             Arquivos de "{draft.id}" no repositório ({repoFiles.length})
@@ -3528,7 +3675,7 @@ function MapEditorScreen({
                   <div key={f.serial} className="flex items-center gap-1.5 text-xs bg-bg border border-border rounded-md px-2 py-1.5">
                     <span className={`font-bold tabular-nums ${f.serial === repoLatest ? "text-accent" : ""}`}>{serialLabel(f.serial)}</span>
                     <span className="text-muted flex-1 min-w-0 truncate">
-                      {mapFileName(draft.id, f.serial)}
+                      {f.file ?? mapFileName(draft.id, f.serial)}
                       {f.serial === activeSerial ? " · ativa na campanha" : f.serial === repoLatest ? " · arquivo mais novo" : ""}
                     </span>
                     <Button size="sm" variant="quiet" onClick={() => setDraft(f.draft)}>
@@ -3539,11 +3686,11 @@ function MapEditorScreen({
                     </Button>
                     <button
                       type="button"
-                      onClick={() => void doDeleteFile(f.serial)}
-                      className={`px-1 ${armedDelete === mapFileName(draft.id, f.serial) ? "text-danger font-bold" : "text-danger"}`}
-                      aria-label={`Apagar ${mapFileName(draft.id, f.serial)}`}
+                      onClick={() => void doDeleteFile(f.file ?? mapFileName(draft.id, f.serial))}
+                      className={`px-1 ${armedDelete === (f.file ?? mapFileName(draft.id, f.serial)) ? "text-danger font-bold" : "text-danger"}`}
+                      aria-label={`Apagar ${f.file ?? mapFileName(draft.id, f.serial)}`}
                     >
-                      {armedDelete === mapFileName(draft.id, f.serial) ? "apagar?" : "✕"}
+                      {armedDelete === (f.file ?? mapFileName(draft.id, f.serial)) ? "Erase?" : "✕"}
                     </button>
                   </div>
                 ))}
@@ -3572,11 +3719,19 @@ function MapEditorScreen({
                     <Button size="sm" variant="quiet" onClick={() => setDraft(v.draft)}>
                       Carregar
                     </Button>
+                    <Button size="sm" variant="quiet" onClick={() => void doSendVersionToRepo(v)} title="Grava esta versão local no repositório com o próximo serial ID###">
+                      Enviar ao repositório
+                    </Button>
                     <Button size="sm" variant="quiet" disabled={activeSerial === v.serial} onClick={() => doActivate(v.serial)}>
                       Ativar
                     </Button>
-                    <button type="button" onClick={() => doDeleteVersion(v.serial)} className="text-danger px-1" aria-label="Excluir versão">
-                      <X className="size-3.5" />
+                    <button
+                      type="button"
+                      onClick={() => doDeleteVersion(v.serial)}
+                      className={`text-danger px-1 ${armedDelete === `local:${draft.id}:${v.serial}` ? "font-bold" : ""}`}
+                      aria-label={`Excluir versão v${serialLabel(v.serial)}`}
+                    >
+                      {armedDelete === `local:${draft.id}:${v.serial}` ? "Erase?" : <X className="size-3.5" />}
                     </button>
                   </div>
                 ))}
@@ -3654,9 +3809,7 @@ function MapEditorScreen({
           >
             Testar
           </Button>
-          <Button variant="quiet" className="flex-1" onClick={() => void saveScenarios()}>
-            Salvar cenários
-          </Button>
+
           <Button variant="quiet" className="flex-1" onClick={() => void doSave()}>
             Salvar mapa
           </Button>
@@ -3695,9 +3848,14 @@ function MapEditorScreen({
                 <p className="font-display text-xl leading-tight">Locais</p>
                 <p className="text-xs text-muted">Ordem em que as missões aparecem, e para onde cada uma vai.</p>
               </div>
-              <button type="button" onClick={() => setShowLocations(false)} className="size-8 grid place-items-center rounded-md border border-border" aria-label="Fechar">
-                <X className="size-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="quiet" onClick={() => void saveScenarios()}>
+                  Salvar
+                </Button>
+                <button type="button" onClick={() => setShowLocations(false)} className="size-8 grid place-items-center rounded-md border border-border" aria-label="Fechar">
+                  <X className="size-4" />
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-col gap-3">
@@ -3710,6 +3868,58 @@ function MapEditorScreen({
                       {loc.name}
                       {planned > 0 ? ` · ${ids.length}/${planned}` : ids.length > 0 ? ` · ${ids.length}` : " · vazio"}
                     </p>
+                    <div className="mb-2 flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="quiet"
+                        onClick={() => {
+                          const fresh = blankDraft();
+                          const mapId = normalizeScenarioId(`${loc.id}-${Date.now().toString(36)}`);
+                          const nextIndex =
+                            Math.max(
+                              -1,
+                              ...ids.map((id) =>
+                                id === draft.id
+                                  ? draft.index
+                                  : missionById(id)?.index ?? savedLocationMaps.find((map) => map.id === id)?.index ?? -1,
+                              ),
+                            ) + 1;
+                          setDraft({
+                            ...fresh,
+                            id: mapId,
+                            index: nextIndex,
+                            title: `Novo mapa — ${loc.name}`,
+                            place: loc.name,
+                            locationId: loc.id,
+                          });
+                          // The campaign structure is saved separately by "Salvar cenários".
+                          // Put this brand-new ID in that pending structure immediately, so
+                          // the button really does save the Local assignment the author chose.
+                          setOrder((current) => ({ ...current, [loc.id]: [...(current[loc.id] ?? []), mapId] }));
+                          setShowLocations(false);
+                          setNote(`Mapa novo criado para ${loc.name}. Salvar cenários grava a posição; Salvar mapa grava o conteúdo.`);
+                        }}
+                      >
+                        Novo mapa aqui
+                      </Button>
+                      <select
+                        className="min-w-0 flex-1 bg-bg border border-border rounded px-1.5 py-1 text-xs"
+                        value=""
+                        title="Coloca neste Local um mapa seu já salvo"
+                        onChange={(e) => {
+                          const mapId = e.target.value;
+                          e.target.value = "";
+                          if (mapId) transferMission(mapId, loc.id);
+                        }}
+                      >
+                        <option value="">Adicionar mapa salvo…</option>
+                        {savedLocationMaps.filter((map) => !ids.includes(map.id)).map((map) => (
+                          <option key={map.id} value={map.id}>
+                            {map.title} · {map.id}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     {ids.length === 0 ? (
                       <p className="text-xs text-muted">Nenhuma missão aqui ainda.</p>
                     ) : (
@@ -3725,6 +3935,14 @@ function MapEditorScreen({
                               </button>
                               <button type="button" disabled={i === ids.length - 1} onClick={() => moveInOrder(loc.id, id, 1)} className="px-1.5 rounded border border-border disabled:opacity-30" aria-label="Descer">
                                 ↓
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeFromLocation(loc.id, id)}
+                                className={`px-1 rounded border ${armedDelete === `location:${loc.id}:${id}` ? "border-danger text-danger font-bold" : "border-border text-danger"}`}
+                                aria-label={`Remover ${m ? m.title : id} deste Local`}
+                              >
+                                {armedDelete === `location:${loc.id}:${id}` ? "Remover?" : "✕"}
                               </button>
                               <select
                                 className="bg-bg border border-border rounded px-1 py-0.5 max-w-[8.5rem]"
@@ -3793,7 +4011,7 @@ function CampaignScreen({
         <p className="text-sm tabular-nums text-muted border border-border rounded-md px-2 py-1">Ember {ember}</p>
       </header>
       <ol className="flex-1 min-h-0 overflow-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))] flex flex-col gap-2">
-        {missions.map((m) => {
+        {missions.map((m, campaignNumber) => {
           const lock = lockedMission(m.id, completed, test);
           const done = completed.includes(m.id);
           const openInn = !!m.hub && !lock;
@@ -3808,7 +4026,7 @@ function CampaignScreen({
                 }`}
               >
                 <p className="text-sm uppercase tracking-[0.16em] text-muted">
-                  {String(m.index + 1).padStart(2, "0")} · {m.place}
+                  {String(campaignNumber + 1).padStart(2, "0")} · {m.place}
                   {m.hub && !lock ? " · aberta" : done ? " · feito" : ""}
                 </p>
                 <p className="font-display text-2xl">{m.title}</p>
@@ -4134,7 +4352,7 @@ function BattleScreen({
               <p className="text-xs text-muted tabular-nums mt-0.5">
                 {hud.terrain.passable ? `Mov ${hud.terrain.moveCost}` : "Intransponível"} · Def +{hud.terrain.def} · Atk +{hud.terrain.atk}
                 {hud.terrain.blocksShot ? " · bloqueia tiro/visão" : ""}
-                {hud.terrain.hazard ? ` · dano ${hud.terrain.hazard} por turno parado` : ""}
+                {hud.terrain.hazard ? ` · dano ${hud.terrain.hazard} ao entrar e a cada turno` : ""}
               </p>
               {hud.terrain.note && <p className="text-xs text-accent mt-1">{hud.terrain.note}</p>}
             </div>

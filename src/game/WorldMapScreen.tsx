@@ -402,7 +402,7 @@ function LocationPanel({
                   <p className="text-sm uppercase tracking-[0.16em] text-muted flex items-center gap-1.5">
                     {st === "locked" && <Lock className="size-3" />}
                     {st === "done" && <Check className="size-3 text-accent" />}
-                    {String(m.index + 1).padStart(2, "0")} · {m.place}
+                    {String(i + 1).padStart(2, "0")} · {m.place}
                     {st === "done" ? " · feito" : ""}
                   </p>
                   <p className="font-display text-2xl">{m.title}</p>

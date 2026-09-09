@@ -2,6 +2,9 @@ import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { BattleEngine } from "./engine";
 import type { GameArt, Mission } from "./types";
 
+// The technical map is a native scroll surface; keep preview scrollbar travel deliberately gentler.
+const PREVIEW_SCROLL_PAN_RATE = 0.45;
+
 /** A read-only window onto the map exactly as the real battle would render it — same tile
  * art, same decoration art, same unit sprites — instead of the paint grid's flat color
  * swatches. Builds a throwaway BattleEngine from the current draft and only ever calls its
@@ -16,10 +19,15 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
   const dragRef = useRef<{ pointerId: number; x: number; y: number; startX: number; startY: number; armed: boolean; moved: boolean } | null>(null);
   const cameraRef = useRef<{ x: number; y: number } | null>(null);
   const verticalScrollTopRef = useRef(0);
+  const horizontalScrollLeftRef = useRef(0);
   const verticalScrollInitializedRef = useRef(false);
   const armTimerRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
+  // Same board width used by the technical map. The scroll surface only becomes wider
+  // when this real board is wider than its window, so the horizontal bar is not permanent.
+  const previewTileRadius = zoom < 1.125 ? 34 : zoom < 1.375 ? 50 : 72;
+  const previewBoardWidth = Math.ceil(previewTileRadius * Math.sqrt(3) * (mission.cols + 0.5));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -65,10 +73,12 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
     draw();
     if (!verticalScrollInitializedRef.current) {
       requestAnimationFrame(() => {
-        const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-        const centeredScroll = Math.round(maxScroll / 2);
-        verticalScrollTopRef.current = centeredScroll;
-        viewport.scrollTop = centeredScroll;
+        const centeredTop = Math.round(Math.max(0, viewport.scrollHeight - viewport.clientHeight) / 2);
+        const centeredLeft = Math.round(Math.max(0, viewport.scrollWidth - viewport.clientWidth) / 2);
+        verticalScrollTopRef.current = centeredTop;
+        horizontalScrollLeftRef.current = centeredLeft;
+        viewport.scrollTop = centeredTop;
+        viewport.scrollLeft = centeredLeft;
         verticalScrollInitializedRef.current = true;
       });
     }
@@ -154,10 +164,12 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
   const onViewportScroll = () => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const delta = viewport.scrollTop - verticalScrollTopRef.current;
+    const deltaY = viewport.scrollTop - verticalScrollTopRef.current;
+    const deltaX = viewport.scrollLeft - horizontalScrollLeftRef.current;
     verticalScrollTopRef.current = viewport.scrollTop;
-    if (!delta) return;
-    engineRef.current?.panBy(0, delta);
+    horizontalScrollLeftRef.current = viewport.scrollLeft;
+    if (!deltaX && !deltaY) return;
+    engineRef.current?.panBy(deltaX * PREVIEW_SCROLL_PAN_RATE, deltaY * PREVIEW_SCROLL_PAN_RATE);
     redrawRef.current?.();
   };
 
@@ -199,8 +211,8 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
       </div>
       <div
         ref={viewportRef}
-        className={`h-full w-full bg-black overflow-x-hidden overflow-y-scroll [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border ${isPanning ? "cursor-grabbing" : "cursor-default"}`}
-        style={{ scrollbarWidth: "auto", scrollbarColor: "var(--color-border, #5a5a5a) transparent", scrollbarGutter: "stable" }}
+        className={`h-full w-full bg-black overflow-x-auto overflow-y-scroll [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-bg/60 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border ${isPanning ? "cursor-grabbing" : "cursor-default"}`}
+        style={{ scrollbarWidth: "auto", scrollbarColor: "var(--color-border, #5a5a5a) transparent", scrollbarGutter: "stable both-edges" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
@@ -208,8 +220,8 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
         onLostPointerCapture={(event) => endDrag(event, true)}
         onScroll={onViewportScroll}
       >
-        <div className="min-h-[300%] w-full">
-          <canvas ref={canvasRef} className="sticky top-0 block" />
+        <div className="min-h-[300%]" style={{ width: `max(100%, ${previewBoardWidth}px)` }}>
+          <canvas ref={canvasRef} className="sticky left-0 top-0 block" />
         </div>
       </div>
     </div>
