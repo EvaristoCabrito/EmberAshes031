@@ -566,6 +566,12 @@ export interface GameArt {
   idles: Partial<Record<SpriteId, HTMLImageElement[]>>;
   walkDirs: Partial<Record<SpriteId, WalkDirs>>;
   impact: HTMLImageElement[];
+  /** Ultra-realistic Fireball core; its trail and light remain procedural. */
+  fireballCore: HTMLImageElement;
+  /** Ultra-realistic Caustic Venom core. */
+  causticVenomCore: HTMLImageElement;
+  /** Ultra-realistic travelling arrow. */
+  arrowCore: HTMLImageElement;
   /** Optional full-canvas backdrop, keyed by mission id. */
   backdrops: Record<string, HTMLImageElement>;
 }

@@ -8,7 +8,7 @@ import type { GameArt, Mission } from "./types";
  * render(), never tick(): no animation loop, no AI, no turns — just a live snapshot that
  * redraws whenever the mission prop changes (the caller debounces that) or the panel resizes.
  * A left click can use the current editor brush directly; gameplay state remains untouched. */
-export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Mission; art: GameArt; onCellClick?: (x: number, y: number) => void }) {
+export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecorationId }: { mission: Mission; art: GameArt; onCellClick?: (x: number, y: number) => void; selectedDecorationId?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<BattleEngine | null>(null);
@@ -58,6 +58,7 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
         }
         needsCameraRestore = false;
       }
+      if (selectedDecorationId) engine.drawDecorationHighlight(ctx, selectedDecorationId);
     };
 
     redrawRef.current = draw;
@@ -79,7 +80,7 @@ export function MapPreviewCanvas({ mission, art, onCellClick }: { mission: Missi
       if (engineRef.current === engine) engineRef.current = null;
       if (redrawRef.current === draw) redrawRef.current = null;
     };
-  }, [mission, art, onCellClick, zoom]);
+  }, [mission, art, onCellClick, selectedDecorationId, zoom]);
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;

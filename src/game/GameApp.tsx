@@ -1729,6 +1729,7 @@ function cellIndex(x: number, y: number, cols: number, rows: number): number {
 
 const MAP_VERSIONS_KEY = "ember-map-versions";
 const MAP_ACTIVE_KEY = "ember-map-active";
+const MAP_ACTIVE_DRAFTS_KEY = "ember-map-active-drafts";
 const DECO_SHUFFLE_EXCLUDE_KEY = "ember-deco-shuffle-exclude";
 const EDITOR_COLS_DEFAULT = 10;
 const EDITOR_ROWS_DEFAULT = 8;
@@ -1936,6 +1937,24 @@ function saveActiveVersions(map: Record<string, number>) {
   }
 }
 
+function loadActiveDrafts(): Record<string, MapDraft> {
+  try {
+    const raw = window.localStorage.getItem(MAP_ACTIVE_DRAFTS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, MapDraft>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveActiveDrafts(drafts: Record<string, MapDraft>): boolean {
+  try {
+    window.localStorage.setItem(MAP_ACTIVE_DRAFTS_KEY, JSON.stringify(drafts));
+    return true;
+  } catch {
+    return false;
+  }
+}
 /** Decoration ids "Gerar terreno" leaves out of its random scatter — per direct
  * instruction, a prop can be too distinctive to want scattered at random without pulling
  * it out of DECORATIONS entirely and losing manual placement too. Browser-local, same as
@@ -1963,10 +1982,20 @@ function saveDecoShuffleExclude(ids: string[]) {
  * a scenario in the Map Editor can actually replace what the campaign plays without ever
  * touching the shipped data. */
 function resolveMission(id: string): Mission | undefined {
+  // The active draft is the campaign's immutable selection snapshot. A serial alone can
+  // point at a stale/local list after reloads, so never make the campaign guess from it.
+  const exact = loadActiveDrafts()[id];
+  if (exact) return draftToMission(exact);
+
+  // Migrate activations created before snapshots existed, then every later launch reads
+  // the exact draft selected by the editor rather than a different disk version.
   const active = loadActiveVersions()[id];
   if (active) {
-    const version = loadVersionStore()[id]?.find((v) => v.serial === active);
-    if (version) return draftToMission(version.draft);
+    const version = loadVersionStore()[id]?.find((v) => v.serial === active && v.draft.id === id);
+    if (version) {
+      saveActiveDrafts({ ...loadActiveDrafts(), [id]: version.draft });
+      return draftToMission(version.draft);
+    }
   }
   return missionById(id);
 }
@@ -2640,31 +2669,44 @@ function MapEditorScreen({
   };
 
   const doActivate = (serial: number) => {
+    const selected = (versionStore[draft.id] ?? []).find((version) => version.serial === serial);
+    if (!selected) {
+      setNote(`NÃO ATIVOU v${serialLabel(serial)}: a cópia local dessa versão não foi encontrada.`);
+      return;
+    }
     const next = { ...activeVersions, [draft.id]: serial };
+    if (!saveActiveDrafts({ ...loadActiveDrafts(), [draft.id]: selected.draft })) {
+      setNote(`NÃO ATIVOU v${serialLabel(serial)}: o navegador recusou salvar a cópia da campanha.`);
+      return;
+    }
     setActiveVersions(next);
     saveActiveVersions(next);
-    setNote(`v${serialLabel(serial)} agora é a versão valendo pra "${draft.id}" na campanha.`);
+    setNote(`v${serialLabel(serial)} agora é a cópia exata valendo pra "${draft.id}" na campanha.`);
   };
 
   const doDeactivate = () => {
     const next = { ...activeVersions };
     delete next[draft.id];
+    const activeDrafts = { ...loadActiveDrafts() };
+    delete activeDrafts[draft.id];
     setActiveVersions(next);
     saveActiveVersions(next);
+    saveActiveDrafts(activeDrafts);
     setNote(`"${draft.id}" voltou a usar o cenário original.`);
   };
 
-  /** Makes an older file the one the game loads. Serials only ever stack up, so instead
-   * of deleting the newer files this saves that draft again as the next serial — the
-   * rollback stays on disk and nothing is lost. */
-  const doActivateFile = async (f: { serial: number; draft: MapDraft }) => {
-    const repo = await saveMapToRepo(f.draft);
-    if (!repo.ok) {
-      setNote(`NÃO ATIVOU ${mapFileName(draft.id, f.serial)}: ${repo.error}`);
+  /** Select an existing repository file directly for campaign play. It does not write a
+   * replacement file: activation is a local campaign pointer to this exact draft. */
+  const doActivateFile = (f: { serial: number; draft: MapDraft }) => {
+    const next = { ...activeVersions, [draft.id]: f.serial };
+    if (!saveActiveDrafts({ ...loadActiveDrafts(), [draft.id]: f.draft })) {
+      setNote(`NÃO ATIVOU ${mapFileName(draft.id, f.serial)}: o navegador recusou salvar a cópia da campanha.`);
       return;
     }
+    setActiveVersions(next);
+    saveActiveVersions(next);
     setDraft(f.draft);
-    setNote(`${mapFileName(draft.id, f.serial)} virou ${repo.file.split("/").pop()} — é essa que o jogo carrega agora.`);
+    setNote(`${mapFileName(draft.id, f.serial)} agora é a cópia exata ativa na campanha.`);
   };
 
   /** Deletes a saved file. Two clicks: the first arms the button, so a misclick on a
@@ -3134,7 +3176,7 @@ function MapEditorScreen({
                   return (
                     <div
                       key={dec.id}
-                      className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-md border ${decoBrush === dec.id ? "border-accent" : "border-border"}`}
+                      className={`flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-md border transition-shadow ${decoBrush === dec.id ? "border-amber-300 bg-amber-300/15 ring-2 ring-amber-300/70 shadow-[0_0_13px_rgba(251,191,36,0.55)]" : "border-border"}`}
                     >
                       <button
                         type="button"
@@ -3256,7 +3298,7 @@ function MapEditorScreen({
             minHeight={220}
           >
             {previewMission ? (
-              <MapPreviewCanvas mission={previewMission} art={art} onCellClick={onCellClick} />
+              <MapPreviewCanvas mission={previewMission} art={art} onCellClick={onCellClick} selectedDecorationId={mode === "decoration" ? decoBrush : undefined} />
             ) : (
               <div className="h-full w-full grid place-items-center text-xs text-muted">Carregando prévia…</div>
             )}
@@ -3487,12 +3529,12 @@ function MapEditorScreen({
                     <span className={`font-bold tabular-nums ${f.serial === repoLatest ? "text-accent" : ""}`}>{serialLabel(f.serial)}</span>
                     <span className="text-muted flex-1 min-w-0 truncate">
                       {mapFileName(draft.id, f.serial)}
-                      {f.serial === repoLatest ? " · é essa que o jogo carrega" : ""}
+                      {f.serial === activeSerial ? " · ativa na campanha" : f.serial === repoLatest ? " · arquivo mais novo" : ""}
                     </span>
                     <Button size="sm" variant="quiet" onClick={() => setDraft(f.draft)}>
                       Carregar
                     </Button>
-                    <Button size="sm" variant="quiet" disabled={f.serial === repoLatest} onClick={() => void doActivateFile(f)}>
+                    <Button size="sm" variant="quiet" disabled={f.serial === activeSerial} onClick={() => doActivateFile(f)}>
                       Ativar
                     </Button>
                     <button
@@ -4020,15 +4062,18 @@ function BattleScreen({
   }
 
   function slotDisabled(action: SlotAction): boolean {
-    if (!actor || !showAct || hud.busy || actor.acted) return true;
+    if (!actor || hud.busy) return true;
     const count = slotCount(action, actor);
     if (count <= 0) return true;
-    if (action.kind === "potion" && POTIONS[action.potion].effect === "heal" && actor.hp >= actor.maxHp) return true;
+    // Potions are free item uses: available before or after the unit's action.
+    if (action.kind === "potion") return false;
+    if (!showAct || actor.acted) return true;
     return false;
   }
 
   function slotActive(action: SlotAction): boolean {
-    return hud.mode === "awaitSpell" && action.kind === "spell" && hud.spellKind === action.spell;
+    if (action.kind === "potion") return hud.mode === "awaitPotion";
+    return hud.mode === "awaitSpell" && hud.spellKind === action.spell;
   }
 
   function activateSlot(i: number) {

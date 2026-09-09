@@ -133,6 +133,8 @@ const MISSILE_TRAVEL = 0.34;
 /** stepSpell's hit tick, per spellKind — every other spell keeps the original 0.18; only
  * Magic Missile's is tied to its own (now longer) travel time. */
 const MISSILE_HIT_AT = MISSILE_TRAVEL;
+/** Arrows travel deliberately slower than arcane bolts. */
+const ARROW_TRAVEL = MISSILE_TRAVEL * 1.25;
 /** How much longer the bolt's glowing trail lingers on screen, fading, after the bolt
  * itself has already landed. Kept short enough that MISSILE_TRAVEL + this stays under 0.55
  * — stepSpell's own finishCombat threshold for every spell — so the trail's afterglow never
@@ -151,13 +153,28 @@ interface MissileFx {
   t: number;
   max: number;
   hue: number;
+  kind: "magicMissile" | "fireball" | "causticVenom" | "longShot" | "arcaneBolt";
   seed: number;
 }
 
 const MISSILE_FX_CAP = 12;
+/** A brief, code-drawn patch of fire on one affected Fireball hex. */
+interface FireballBurstFx {
+  live: boolean;
+  x: number;
+  y: number;
+  t: number;
+  max: number;
+  seed: number;
+  kind: "fireball" | "causticVenom";
+}
+const FIREBALL_BURST_CAP = 19;
+function blankFireballBurstFx(): FireballBurstFx {
+  return { live: false, x: 0, y: 0, t: 0, max: 0.58, seed: 0, kind: "fireball" };
+}
 
 function blankMissileFx(): MissileFx {
-  return { live: false, fromX: 0, fromY: 0, toX: 0, toY: 0, t: 0, max: MISSILE_TRAVEL + MISSILE_AFTERGLOW, hue: 268, seed: 0 };
+  return { live: false, fromX: 0, fromY: 0, toX: 0, toY: 0, t: 0, max: MISSILE_TRAVEL + MISSILE_AFTERGLOW, travel: MISSILE_TRAVEL, hue: 268, kind: "magicMissile", seed: 0 };
 }
 
 /** How long the Lightning strike's flash lasts, start to fully faded — short and sudden on
@@ -237,7 +254,7 @@ type Seq =
        * next turn. */
       stunChance?: number;
     }
-  | { type: "spell"; att: string; tiles: Point[]; ids: string[]; dice?: number; faces?: number; bonus?: number; moreDice?: number; moreFaces?: number; label?: string; echo?: { dice: number; faces: number; bonus: number }; dmgMul?: number; weaponBonusDice?: number; weaponBonusFaces?: number; weaponBonusBonus?: number; spellKind?: SpellKind; centerId?: string; centerDice?: number; centerFaces?: number; centerBonus?: number; poison?: boolean; spellMul?: number; centerMul?: number }
+  | { type: "spell"; att: string; tiles: Point[]; ids: string[]; dice?: number; faces?: number; bonus?: number; moreDice?: number; moreFaces?: number; label?: string; echo?: { dice: number; faces: number; bonus: number }; dmgMul?: number; weaponBonusDice?: number; weaponBonusFaces?: number; weaponBonusBonus?: number; spellKind?: SpellKind; projectileTo?: Point; centerId?: string; centerDice?: number; centerFaces?: number; centerBonus?: number; poison?: boolean; spellMul?: number; centerMul?: number }
   | { type: "heal"; att: string; def: string; kind: HealId }
   | { type: "cureDisease"; att: string; def: string }
   | { type: "banner"; text: string; dur: number }
@@ -287,6 +304,8 @@ interface SpellAnim {
   weaponBonusFaces: number;
   weaponBonusBonus: number;
   spellKind: SpellKind | null;
+  /** Exact hex a travelling spell projectile must reach before its AoE resolves. */
+  projectileTo: Point | null;
   /** Caustic Venom: the one unit in `ids` that takes the bigger centerDice/Faces/Bonus roll
    * instead of the regular extraDice/Faces/Bonus splash roll — null for every other spell. */
   centerId: string | null;
@@ -582,6 +601,8 @@ export class BattleEngine {
   /** id of the unit whose turn we've already dispatched — lets the tick loop react only on change. */
   private activeUnitId: string | null = null;
   orig: Point | null = null;
+  /** Movement already spent at the last cancel-safe point (turn start or completed action). */
+  private origMoveBudgetUsed: number | null = null;
   hover: Point | null = null;
   private lastClickAt = 0;
   private lastClickCell: Point | null = null;
@@ -642,6 +663,8 @@ export class BattleEngine {
   private levelUpFxLive = 0;
   private missileFx: MissileFx[] = Array.from({ length: MISSILE_FX_CAP }, blankMissileFx);
   private missileFxLive = 0;
+  private fireballBurstFx: FireballBurstFx[] = Array.from({ length: FIREBALL_BURST_CAP }, blankFireballBurstFx);
+  private fireballBurstFxLive = 0;
   private lightningFx: LightningFx[] = Array.from({ length: LIGHTNING_FX_CAP }, blankLightningFx);
   private lightningFxLive = 0;
   private onNextIdle: (() => void) | null = null;
@@ -985,6 +1008,16 @@ export class BattleEngine {
       }
       this.missileFxLive = live;
     }
+    if (this.fireballBurstFxLive) {
+      let live = 0;
+      for (const burst of this.fireballBurstFx) {
+        if (!burst.live) continue;
+        burst.t += cap;
+        if (burst.t >= burst.max) { burst.live = false; continue; }
+        live += 1;
+      }
+      this.fireballBurstFxLive = live;
+    }
     if (this.lightningFxLive) {
       let live = 0;
       for (const l of this.lightningFx) {
@@ -1071,7 +1104,26 @@ export class BattleEngine {
       sfxPlay.crit();
       if (step.spellKind === "magicMissile") {
         const caster = this.units.find((u) => u.id === step.att);
-        if (caster) for (const t of step.tiles) this.emitMissileFx(caster.x, caster.y, t.x, t.y);
+        if (caster) for (const t of step.tiles) this.emitMissileFx(caster.x, caster.y, t.x, t.y, "magicMissile");
+      }
+      if (step.spellKind === "fireball" || step.spellKind === "causticVenom") {
+        const caster = this.units.find((u) => u.id === step.att);
+        const target = step.projectileTo ?? null;
+        if (caster && target) this.emitMissileFx(caster.x, caster.y, target.x, target.y, step.spellKind);
+      }
+      if (step.spellKind === "longShot") {
+        const caster = this.units.find((u) => u.id === step.att);
+        const target = step.tiles[0];
+        if (caster && target) this.emitMissileFx(caster.x, caster.y, target.x, target.y, "longShot");
+      }
+      if (step.spellKind === "multiShot") {
+        const caster = this.units.find((u) => u.id === step.att);
+        if (caster) for (const target of step.tiles) this.emitMissileFx(caster.x, caster.y, target.x, target.y, "longShot");
+      }
+      if (step.spellKind === "piercing") {
+        const caster = this.units.find((u) => u.id === step.att);
+        const target = step.tiles[step.tiles.length - 1];
+        if (caster && target) this.emitMissileFx(caster.x, caster.y, target.x, target.y, "longShot");
       }
       if (step.spellKind === "lightning") {
         for (const t of step.tiles) this.emitLightningFx(t.x, t.y);
@@ -1175,18 +1227,25 @@ export class BattleEngine {
       const actor = a.stage === "lunge" ? att : def;
       const target = a.stage === "lunge" ? def : att;
       const k = Math.min(1, a.t / lunge);
-      actor.drawX = actor.x + (target.x - actor.x) * 0.28 * k;
-      actor.drawY = actor.y + (target.y - actor.y) * 0.28 * k;
+      const arrowShot = this.isArrowAttack(actor);
+      const arcaneBolt = !arrowShot && this.isArcaneCaster(actor);
+      const ranged = arrowShot || arcaneBolt;
+      actor.drawX = actor.x + (target.x - actor.x) * (ranged ? 0 : 0.28) * k;
+      actor.drawY = actor.y + (target.y - actor.y) * (ranged ? 0 : 0.28) * k;
       if (a.t >= lunge) {
+        if (ranged) this.emitMissileFx(actor.x, actor.y, target.x, target.y, arrowShot ? "longShot" : "arcaneBolt");
         a.t = 0;
         a.stage = a.stage === "lunge" ? "hit" : "counterHit";
       }
       return;
     }
     if (a.stage === "hit" || a.stage === "counterHit") {
-      if (a.t < 0.02) {
-        const actor = a.stage === "hit" ? att : def;
-        const target = a.stage === "hit" ? def : att;
+      const actor = a.stage === "hit" ? att : def;
+      const target = a.stage === "hit" ? def : att;
+      const arrowShot = this.isArrowAttack(actor);
+      const arcaneBolt = !arrowShot && this.isArcaneCaster(actor);
+      const impactAt = arrowShot ? ARROW_TRAVEL : arcaneBolt ? MISSILE_TRAVEL : 0.02;
+      if (a.t >= impactAt && a.t - dt < impactAt) {
         const attTile = tileAt(this.tiles, this.cols, actor.x, actor.y);
         const defTile = tileAt(this.tiles, this.cols, target.x, target.y);
         // customDice/dmgMul/stunChance are the attacker's own strike (off-hand weapon or
@@ -1222,7 +1281,7 @@ export class BattleEngine {
         if (target.side !== actor.side && a.stage === "hit") {
           this.gainExp(actor, target.level, hit.dmg, 1);
         }
-        this.spawnHit(target, hit.dmg, hit.crit);
+        this.spawnHit(target, hit.dmg, hit.crit, !this.isArrowAttack(actor) && !this.isArcaneCaster(actor));
         this.pushLog(`${actor.name} atacou ${target.name}: ${hit.dmg} dano${hit.crit ? " (crítico)" : ""}`);
         if (target.hp <= 0) {
           this.markDead(target);
@@ -1247,7 +1306,7 @@ export class BattleEngine {
         if (!this.reducedMotion) this.trauma = Math.min(1, this.trauma + 0.28);
         this.hitstop = 0.06;
       }
-      if (a.t >= 0.18) {
+      if (a.t >= (this.isArrowAttack(actor) ? ARROW_TRAVEL + 0.18 : this.isArcaneCaster(actor) ? MISSILE_TRAVEL + 0.18 : 0.18)) {
         a.t = 0;
         a.stage = a.stage === "hit" ? "recover" : "counterRecover";
       }
@@ -1307,7 +1366,8 @@ export class BattleEngine {
       return;
     }
     a.t += dt;
-    const hitAt = a.spellKind === "magicMissile" ? MISSILE_HIT_AT : 0.18;
+    const arrowSpell = a.spellKind === "longShot" || a.spellKind === "multiShot" || a.spellKind === "piercing";
+    const hitAt = arrowSpell ? ARROW_TRAVEL : a.spellKind === "magicMissile" || a.spellKind === "fireball" || a.spellKind === "causticVenom" ? MISSILE_HIT_AT : 0.18;
     if (!a.hit && a.t >= hitAt) {
       a.hit = true;
       sfxPlay.spell();
@@ -1410,7 +1470,8 @@ export class BattleEngine {
           if (isAoeSpell) firstAoeEnemyHit = false;
           this.gainExp(att, foe.level, dmg, xpMul);
         }
-        this.spawnHit(foe, dmg, crit);
+        const meleeSkill = a.spellKind === "doubleStrike" || a.spellKind === "cleave" || a.spellKind === "piercingThrust" || a.spellKind === "sweep" || a.spellKind === "trip" || a.spellKind === "shoulderSmash" || a.spellKind === "stampede";
+        this.spawnHit(foe, dmg, crit, meleeSkill);
         this.pushLog(`${att.name} atingiu ${foe.name} com magia: ${dmg} dano${crit ? " (crítico)" : ""}`);
         if (foe.hp <= 0) {
           this.markDead(foe);
@@ -1423,19 +1484,9 @@ export class BattleEngine {
           }
         }
       }
+      if (a.spellKind === "fireball" || a.spellKind === "causticVenom") this.emitFireballBurstFx(a.tiles, a.spellKind);
       if (!this.reducedMotion) this.trauma = Math.min(1, this.trauma + 0.45);
-      this.emitParticle({
-        x: att.x,
-        y: att.y,
-        vx: 0,
-        vy: -0.4,
-        life: 0,
-        max: 0.45,
-        size: 1,
-        color: "#c45a32",
-        kind: "impact",
-        frame: 0,
-      });
+
     }
     if (a.t >= 0.55) this.finishCombat(att);
   }
@@ -1655,6 +1706,7 @@ export class BattleEngine {
     }
     this.selectedId = u.id;
     this.orig = { x: u.x, y: u.y };
+    this.origMoveBudgetUsed = u.moveBudgetUsed;
     this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
     this.mode = "selected";
   }
@@ -1977,8 +2029,37 @@ export class BattleEngine {
     }
   }
 
+  /** One burning patch per Fireball area cell, all procedural so it conforms to every map. */
+  private emitFireballBurstFx(tiles: Point[], kind: "fireball" | "causticVenom"): void {
+    if (this.reducedMotion) return;
+    for (const cell of tiles) {
+      let burst = this.fireballBurstFx.find((x) => !x.live);
+      if (!burst) burst = this.fireballBurstFx[0]!;
+      else this.fireballBurstFxLive += 1;
+      burst.live = true;
+      burst.x = cell.x;
+      burst.y = cell.y;
+      burst.t = 0;
+      burst.max = 0.58;
+      burst.seed = this.rng() * Math.PI * 2;
+    }
+  }
+  /** True only for bow/crossbow users. Reach weapons strike physically instead of firing arrows. */
+  private isArrowAttack(unit: Unit): boolean {
+    // Reach weapons are always physical, even if an imported loadout is incorrectly flagged ranged.
+    if (unit.classId === "pikeman" || unit.classId === "lancer" || unit.classId === "sentinel" || unit.classId === "templar") return false;
+    if (unit.weaponId) return !!WEAPONS[unit.weaponId]?.ranged;
+    // Default campaign loadouts: Neera and brigands start as bow/crossbow users before gear is assigned.
+    return unit.classId === "archer" || unit.classId === "ranger" || unit.classId === "assassin" || unit.classId === "brigand";
+  }
+
+  /** Only spellcasting classes use the distinct basic-attack arcane bolt. */
+  private isArcaneCaster(unit: Unit): boolean {
+    return unit.classId === "mage" || unit.classId === "elementalist" || unit.classId === "warlock" || unit.classId === "cultist" || unit.classId === "birolho";
+  }
+
   /** One glowing bolt per target, hex-to-hex — see MissileFx. */
-  private emitMissileFx(fromX: number, fromY: number, toX: number, toY: number): void {
+  private emitMissileFx(fromX: number, fromY: number, toX: number, toY: number, kind: "magicMissile" | "fireball" | "causticVenom" | "longShot" | "arcaneBolt"): void {
     if (this.reducedMotion) return;
     let slot = this.missileFx.find((m) => !m.live);
     if (!slot) {
@@ -1997,8 +2078,10 @@ export class BattleEngine {
     slot.toX = toX;
     slot.toY = toY;
     slot.t = 0;
-    slot.max = MISSILE_TRAVEL + MISSILE_AFTERGLOW;
-    slot.hue = 268;
+    slot.travel = kind === "longShot" ? ARROW_TRAVEL : MISSILE_TRAVEL;
+    slot.max = slot.travel + MISSILE_AFTERGLOW;
+    slot.hue = kind === "fireball" ? 22 : kind === "causticVenom" ? 104 : kind === "longShot" ? 205 : kind === "arcaneBolt" ? 2 : 268;
+    slot.kind = kind;
     slot.seed = this.rng() * Math.PI * 2;
   }
 
@@ -2033,7 +2116,7 @@ export class BattleEngine {
     }));
   }
 
-  private spawnHit(target: Unit, dmg: number, crit: boolean): void {
+  private spawnHit(target: Unit, dmg: number, crit: boolean, physicalImpact = false): void {
     const cx = target.drawX;
     const cy = target.drawY;
     this.emitParticle({
@@ -2144,6 +2227,7 @@ export class BattleEngine {
     this.pendingFoeId = null;
     this.inspectedId = null;
     this.orig = { x: unit.x, y: unit.y };
+    this.origMoveBudgetUsed = unit.moveBudgetUsed;
     this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units);
     this.attackFrom = unit.acted ? new Map() : attackableEnemies(unit, this.reach, this.units, this.tiles, this.cols);
     this.threat = [];
@@ -2205,6 +2289,7 @@ export class BattleEngine {
     u.drawY = back.y;
     u.moveBudgetUsed = 0;
     this.orig = { x: back.x, y: back.y };
+    this.origMoveBudgetUsed = 0;
     this.pendingFoeId = null;
     this.inspectedId = null;
     this.threat = [];
@@ -2220,17 +2305,16 @@ export class BattleEngine {
 
   deselect(commit = false): void {
     const u = this.units.find((x) => x.id === this.selectedId);
-    if (
-      !commit &&
-      u &&
-      this.orig &&
-      (u.x !== this.orig.x || u.y !== this.orig.y) &&
-      (this.mode === "awaitAction" || this.mode === "selected")
-    ) {
+    const canRestore = !commit && u && this.orig && (this.mode === "awaitAction" || this.mode === "selected");
+    if (canRestore) {
+      // A cancel returns to the last safe point as one complete snapshot: position AND
+      // movement. Before an action that is turn start (full movement); after an action it
+      // is the action's position and the movement already spent to reach it.
       u.x = this.orig.x;
       u.y = this.orig.y;
       u.drawX = u.x;
       u.drawY = u.y;
+      u.moveBudgetUsed = this.origMoveBudgetUsed ?? (u.acted ? u.moveBudgetUsed : 0);
     }
     this.selectedId = null;
     this.pendingFoeId = null;
@@ -2239,6 +2323,7 @@ export class BattleEngine {
     this.reach.clear();
     this.attackFrom.clear();
     this.orig = null;
+    this.origMoveBudgetUsed = null;
     this.mode = "idle";
   }
 
@@ -3469,14 +3554,14 @@ export class BattleEngine {
    * targeted action already asks for. */
   usePotion(kind: PotionId): void {
     const u = this.units.find((x) => x.id === this.selectedId);
-    if (!u || u.side !== "player" || !u.alive || u.acted) return;
+    if (!u || u.side !== "player" || !u.alive) return;
     if (this.mode !== "awaitAction" && this.mode !== "selected" && this.mode !== "awaitAttack" && this.mode !== "awaitSpell")
       return;
     if (this.phase !== "player" || this.result) return;
     if (u.bag[kind] <= 0) return;
     this.mode = "awaitPotion";
     this.potionAim = kind;
-    this.tip = `${potionLabel(kind)}: toque em você ou num aliado adjacente.`;
+    this.tip = `${potionLabel(kind)}: toque em você ou num aliado adjacente. Não gasta ação.`;
     sfxPlay.ui();
   }
 
@@ -3521,7 +3606,7 @@ export class BattleEngine {
       actor.y = Math.round(actor.drawY);
       this.tip = `${def.name} · ${target.name} curado(a) da doença.`;
       this.emitBeneficialGlow(target);
-      this.finishAction(actor);
+      this.mode = "awaitAction";
       sfxPlay.ui();
       return;
     }
@@ -3559,7 +3644,7 @@ export class BattleEngine {
       });
       this.tip = `${def.name} · +${restored} usos de magia (${target.name})`;
       this.emitBeneficialGlow(target);
-      this.finishAction(actor);
+      this.mode = "awaitAction";
       sfxPlay.ui();
       return;
     }
@@ -3590,7 +3675,7 @@ export class BattleEngine {
     });
     this.tip = `${potionLabel(kind)} · +${gained} HP (${target.name})`;
     this.emitBeneficialGlow(target);
-    this.finishAction(actor);
+    this.mode = "awaitAction";
     sfxPlay.ui();
   }
 
@@ -3697,7 +3782,7 @@ export class BattleEngine {
   /** "Arrombar": spends a Gazua to open an adjacent locked chest/door. */
   useLockpick(): void {
     const u = this.units.find((x) => x.id === this.selectedId);
-    if (!u || u.side !== "player" || !u.alive || u.acted) return;
+    if (!u || u.side !== "player" || !u.alive) return;
     if (this.mode !== "awaitAction" && this.mode !== "selected" && this.mode !== "awaitAttack" && this.mode !== "awaitSpell")
       return;
     if (this.phase !== "player" || this.result) return;
@@ -3834,6 +3919,7 @@ export class BattleEngine {
       this.pendingFoeId = null;
       this.inspectedId = null;
       this.orig = { x: u.x, y: u.y };
+    this.origMoveBudgetUsed = u.moveBudgetUsed;
       this.turnStart = { x: u.x, y: u.y };
       this.moveSpoiled = false;
       this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
@@ -4442,6 +4528,7 @@ export class BattleEngine {
       label: FIREBALL.name,
       spellMul: FIREBALL.mul,
       spellKind: "fireball",
+      projectileTo: origin,
     });
   }
 
@@ -4478,6 +4565,7 @@ export class BattleEngine {
       spellMul: CAUSTIC_VENOM.splashMul,
       centerMul: CAUSTIC_VENOM.centerMul,
       spellKind: "causticVenom",
+      projectileTo: origin,
     });
   }
 
@@ -4498,6 +4586,26 @@ export class BattleEngine {
     this.clampCam();
   }
 
+  /** Editor-only overlay: show the footprint of the decoration brush in the live preview. */
+  drawDecorationHighlight(ctx: CanvasRenderingContext2D, decorationId: string): void {
+    const tile = this.layout.tile;
+    ctx.save();
+    ctx.lineWidth = Math.max(2, tile * 0.075);
+    ctx.strokeStyle = "rgba(255, 207, 82, 0.98)";
+    ctx.fillStyle = "rgba(255, 190, 46, 0.14)";
+    ctx.shadowColor = "rgba(255, 174, 35, 0.95)";
+    ctx.shadowBlur = Math.max(7, tile * 0.32);
+    for (const placement of this.decorations) {
+      if (placement.id !== decorationId) continue;
+      for (const cell of placedFootprint(placement)) {
+        const { cx, cy } = this.hexCenter(placement.x + cell.dx, placement.y + cell.dy);
+        this.hexPath(ctx, cx, cy, tile * 0.91);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
   setZoom(level: number): void {
     const next = Math.max(0, Math.min(ZOOM_RADII.length - 1, Math.round(level)));
     if (next === this.zoom) return;
@@ -4864,6 +4972,67 @@ export class BattleEngine {
     return { bob, sway, breath };
   }
 
+  /** Persistent visual-code status FX: it tracks a unit, loops with engine time,
+   * and needs no image, texture, or background. */
+  private drawStatusFx(ctx: CanvasRenderingContext2D, u: Unit, w: number, h: number): void {
+    if (!u.poisoned && !u.diseased) return;
+
+    const layer = (poison: boolean) => {
+      const core = poison ? "105,238,116" : "176,92,246";
+      const dark = poison ? "24,112,63" : "78,34,126";
+      const speed = poison ? 0.72 : 0.48;
+      const seed = (u.x * 1.73 + u.y * 2.41 + u.id.length * 0.37) % (Math.PI * 2);
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const pulse = 0.58 + Math.sin(this.time * (poison ? 3.8 : 2.5) + seed) * 0.16;
+      const haze = ctx.createRadialGradient(0, -h * 0.18, 0, 0, -h * 0.18, w * 0.48);
+      haze.addColorStop(0, `rgba(${core},${0.12 * pulse})`);
+      haze.addColorStop(0.55, `rgba(${dark},${0.055 * pulse})`);
+      haze.addColorStop(1, `rgba(${dark},0)`);
+      ctx.fillStyle = haze;
+      ctx.beginPath();
+      ctx.ellipse(0, -h * 0.18, w * 0.48, h * 0.18, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Motes loop from feet to head, so the status looks alive rather than like a cast.
+      for (let i = 0; i < 8; i += 1) {
+        const rise = (this.time * speed + i * 0.137 + seed * 0.11) % 1;
+        const wave = this.time * (1.8 + (i % 3) * 0.21) + i * 2.37 + seed;
+        const x = Math.sin(wave) * w * (0.13 + (i % 4) * 0.042);
+        const y = -h * (0.1 + rise * 0.72);
+        const r = Math.max(1.2, w * (i % 3 === 0 ? 0.035 : 0.022));
+        const alpha = (0.18 + (1 - rise) * 0.38) * (poison ? 1 : 0.82);
+        ctx.shadowColor = `rgba(${core},${alpha})`;
+        ctx.shadowBlur = r * 3.2;
+        ctx.fillStyle = `rgba(${core},${alpha})`;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Thin rising vapour: green is sharper/acidic, purple is slower/sickly.
+      ctx.lineCap = "round";
+      for (let side = -1; side <= 1; side += 2) {
+        ctx.strokeStyle = `rgba(${core},${poison ? 0.3 : 0.22})`;
+        ctx.shadowColor = `rgba(${core},0.42)`;
+        ctx.shadowBlur = w * 0.08;
+        ctx.lineWidth = Math.max(1, w * 0.017);
+        ctx.beginPath();
+        for (let step = 0; step <= 5; step += 1) {
+          const p = step / 5;
+          const y = -h * (0.08 + p * 0.64);
+          const x = side * w * (0.1 + Math.sin(this.time * (poison ? 2.2 : 1.45) + p * 7 + seed) * 0.1);
+          if (step === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    };
+
+    if (u.poisoned) layer(true);
+    if (u.diseased) layer(false);
+  }
   render(ctx: CanvasRenderingContext2D, cssW: number, cssH: number, dpr: number): void {
     const sqrt3 = Math.sqrt(3);
     const tile = ZOOM_RADII[this.zoom]!;
@@ -5265,6 +5434,7 @@ export class BattleEngine {
         ctx.shadowBlur = w * 0.42 * u.healGlow * pulse;
         ctx.drawImage(img, -w / 2, -h, w, h);
       }
+      this.drawStatusFx(ctx, u, w, h);
       ctx.filter = "none";
       ctx.shadowBlur = 0;
       ctx.restore();
@@ -5428,6 +5598,42 @@ export class BattleEngine {
       ctx.globalAlpha = 1;
     }
 
+    if (this.fireballBurstFxLive) {
+      for (const burst of this.fireballBurstFx) {
+        if (!burst.live) continue;
+        const { cx, cy } = this.hexCenter(burst.x, burst.y);
+        const k = burst.t / burst.max;
+        const fade = Math.max(0, 1 - k);
+        const radius = tile * (0.34 + k * 0.72);
+        const venom = burst.kind === "causticVenom";
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        const glow = ctx.createRadialGradient(cx, cy - tile * 0.1, 0, cx, cy - tile * 0.1, radius);
+        glow.addColorStop(0, venom ? `rgba(232,255,175,${0.84 * fade})` : `rgba(255,248,194,${0.9 * fade})`);
+        glow.addColorStop(0.22, venom ? `rgba(159,242,45,${0.76 * fade})` : `rgba(255,174,35,${0.78 * fade})`);
+        glow.addColorStop(0.62, venom ? `rgba(25,150,54,${0.45 * fade})` : `rgba(236,62,12,${0.42 * fade})`);
+        glow.addColorStop(1, venom ? "rgba(4,72,30,0)" : "rgba(128,18,0,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(cx, cy - tile * 0.1, radius, 0, Math.PI * 2);
+        ctx.fill();
+        // Rising tongues and embers make every AoE hex visibly burn instead of only flashing.
+        for (let i = 0; i < 7; i += 1) {
+          const angle = burst.seed + i * 2.41 + k * 5.2;
+          const spread = tile * (0.18 + (i % 3) * 0.1) * (0.75 + k * 0.35);
+          const px = cx + Math.cos(angle) * spread;
+          const py = cy - tile * (0.08 + k * 0.28) + Math.sin(angle) * spread * 0.45;
+          const r = tile * (0.055 + (i % 2) * 0.025) * fade;
+          ctx.shadowColor = venom ? "rgba(126,255,48,0.95)" : "rgba(255,106,12,0.95)";
+          ctx.shadowBlur = tile * 0.22;
+          ctx.fillStyle = venom ? (i % 3 === 0 ? `rgba(222,255,142,${fade})` : `rgba(65,209,54,${0.85 * fade})`) : (i % 3 === 0 ? `rgba(255,239,150,${fade})` : `rgba(255,93,8,${0.85 * fade})`);
+          ctx.beginPath();
+          ctx.arc(px, py, Math.max(1, r), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
     if (this.missileFxLive) {
       for (const m of this.missileFx) {
         if (!m.live) continue;
@@ -5444,8 +5650,72 @@ export class BattleEngine {
         };
         // kHead: the bolt's own position, 0-1, frozen at 1 once it lands. afterglow: 0 while
         // still flying, ramping to 1 as the lingering trail fades out after arrival.
-        const kHead = Math.min(1, m.t / MISSILE_TRAVEL);
-        const afterglow = Math.max(0, (m.t - MISSILE_TRAVEL) / MISSILE_AFTERGLOW);
+        const kHead = Math.min(1, m.t / m.travel);
+        const afterglow = Math.max(0, (m.t - m.travel) / MISSILE_AFTERGLOW);
+        const physicalArrow = m.kind === "longShot";
+        if (physicalArrow) {
+          // arrow-002: original supplied arrow art, straight travel, with a restrained air-pressure wake.
+          const head = { x: from.cx + dxT * kHead, y: from.cy - tile * 0.3 + dyT * kHead };
+          const flightAngle = Math.atan2(dyT, dxT);
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = (1 - afterglow) * 0.24;
+          ctx.strokeStyle = "rgba(215,222,226,0.74)";
+          ctx.lineWidth = Math.max(1, tile * 0.012);
+          for (let ring = 1; ring <= 2; ring += 1) {
+            const bk = Math.max(0, kHead - ring * 0.1);
+            const back = { x: from.cx + dxT * bk, y: from.cy - tile * 0.3 + dyT * bk };
+            ctx.beginPath();
+            ctx.ellipse(back.x, back.y, tile * (0.09 + ring * 0.035), tile * (0.024 + ring * 0.01), flightAngle, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.restore();
+          ctx.save();
+          ctx.translate(head.x, head.y);
+          // The supplied source points northeast (-45°); rotate from that intrinsic direction to the flight angle.
+          ctx.rotate(flightAngle + Math.PI / 4);
+          ctx.globalCompositeOperation = "screen";
+          ctx.globalAlpha = 1 - afterglow;
+          ctx.drawImage(this.art.arrowCore, -tile * 0.54, -tile * 0.54, tile * 1.08, tile * 1.08);
+          ctx.restore();
+          continue;
+        }
+
+        const minorArcaneBolt = m.kind === "arcaneBolt";
+
+        if (minorArcaneBolt) {
+          // Mage basic attack: two thin arcane pressure waves, then a runic impact at the target.
+          const head = along(kHead);
+          const angle = Math.atan2(dyT, dxT);
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = 1 - afterglow;
+          ctx.strokeStyle = "rgba(202,92,255,0.72)";
+          ctx.lineWidth = Math.max(1, tile * 0.017);
+          for (let ring = 1; ring <= 2; ring += 1) {
+            const back = along(Math.max(0, kHead - ring * 0.1));
+            ctx.beginPath();
+            ctx.ellipse(back.x, back.y, tile * (0.09 + ring * 0.035), tile * (0.025 + ring * 0.012), angle + Math.PI / 4, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.fillStyle = "rgba(244,150,255,0.92)";
+          ctx.beginPath(); ctx.arc(head.x, head.y, tile * 0.035, 0, Math.PI * 2); ctx.fill();
+          if (kHead >= 1) {
+            ctx.strokeStyle = "rgba(255,110,220,0.88)";
+            ctx.lineWidth = Math.max(1, tile * 0.014);
+            for (let ray = 0; ray < 8; ray += 1) {
+              const a = m.seed + ray * Math.PI / 4;
+              const inner = tile * 0.05;
+              const outer = tile * (0.12 + 0.09 * afterglow);
+              ctx.beginPath();
+              ctx.moveTo(head.x + Math.cos(a) * inner, head.y + Math.sin(a) * inner * 0.55);
+              ctx.lineTo(head.x + Math.cos(a) * outer, head.y + Math.sin(a) * outer * 0.55);
+              ctx.stroke();
+            }
+          }
+          ctx.restore();
+          continue;
+        }
 
         // The light trace it leaves behind: a single stroke along the whole path already
         // flown, distinct from the comet below (which only ever hugs the head) — this is
@@ -5458,29 +5728,30 @@ export class BattleEngine {
             if (i === 0) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
           }
-          const traceFade = (1 - afterglow) * 0.55;
+          const traceFade = (1 - afterglow) * (physicalArrow ? 0.13 : minorArcaneBolt ? 0.44 : 0.55);
           ctx.lineCap = "round";
           ctx.lineJoin = "round";
-          ctx.lineWidth = tile * 0.05;
-          ctx.strokeStyle = `hsla(${m.hue}, 90%, 74%, ${traceFade})`;
-          ctx.shadowColor = `hsla(${m.hue}, 95%, 70%, ${traceFade})`;
-          ctx.shadowBlur = tile * 0.4;
+          ctx.lineWidth = tile * (physicalArrow ? 0.018 : minorArcaneBolt ? 0.028 : 0.05);
+          ctx.strokeStyle = physicalArrow ? `rgba(218,224,226,${traceFade})` : `hsla(${m.hue}, 90%, 74%, ${traceFade})`;
+          ctx.shadowColor = physicalArrow ? `rgba(218,224,226,${traceFade})` : `hsla(${m.hue}, 95%, 70%, ${traceFade})`;
+          ctx.shadowBlur = tile * (physicalArrow ? 0.1 : 0.4);
           ctx.stroke();
           ctx.shadowBlur = 0;
         }
 
         if (afterglow < 1) {
           // A bigger, punchier comet trail right behind the head.
-          for (let i = 7; i >= 0; i--) {
+          const cometCount = minorArcaneBolt ? 11 : 7;
+          for (let i = cometCount; i >= 0; i--) {
             const tk = Math.max(0, kHead - i * 0.05);
             const p = along(tk);
             const fade = (1 - i / 8) * (1 - afterglow);
-            const r = tile * (0.16 - i * 0.016);
+            const r = tile * (physicalArrow ? (0.045 - i * 0.004) : (minorArcaneBolt ? 0.64 : 1) * (0.16 - i * 0.016));
             if (r <= 0) continue;
             const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 3);
-            g.addColorStop(0, `hsla(${m.hue}, 95%, 86%, ${fade})`);
-            g.addColorStop(0.35, `hsla(${m.hue}, 92%, 68%, ${fade * 0.75})`);
-            g.addColorStop(1, `hsla(${m.hue}, 90%, 55%, 0)`);
+            g.addColorStop(0, physicalArrow ? `rgba(228,232,234,${fade * 0.18})` : `hsla(${m.hue}, 95%, 86%, ${fade})`);
+            g.addColorStop(0.35, physicalArrow ? `rgba(150,158,162,${fade * 0.08})` : `hsla(${m.hue}, 92%, 68%, ${fade * 0.75})`);
+            g.addColorStop(1, physicalArrow ? `rgba(120,130,136,0)` : `hsla(${m.hue}, 90%, 55%, 0)`);
             ctx.fillStyle = g;
             ctx.beginPath();
             ctx.arc(p.x, p.y, r * 3, 0, Math.PI * 2);
@@ -5489,16 +5760,66 @@ export class BattleEngine {
           const head = along(kHead);
           // A big soft aura around the head, well beyond the core, for real glow.
           const auraFade = 1 - afterglow;
-          const aura = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, tile * 0.55);
-          aura.addColorStop(0, `hsla(${m.hue}, 100%, 85%, ${0.55 * auraFade})`);
-          aura.addColorStop(1, `hsla(${m.hue}, 100%, 60%, 0)`);
+          const aura = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, tile * (physicalArrow ? 0.16 : minorArcaneBolt ? 0.34 : 0.55));
+          aura.addColorStop(0, physicalArrow ? `rgba(230,234,236,${0.1 * auraFade})` : `hsla(${m.hue}, 100%, 85%, ${(minorArcaneBolt ? 0.34 : 0.55) * auraFade})`);
+          aura.addColorStop(1, physicalArrow ? `rgba(180,188,192,0)` : `hsla(${m.hue}, 100%, 60%, 0)`);
           ctx.fillStyle = aura;
           ctx.beginPath();
-          ctx.arc(head.x, head.y, tile * 0.55, 0, Math.PI * 2);
+          ctx.arc(head.x, head.y, tile * (physicalArrow ? 0.16 : minorArcaneBolt ? 0.34 : 0.55), 0, Math.PI * 2);
           ctx.fill();
-          ctx.fillStyle = `rgba(255,255,255,${0.95 * auraFade})`;
+          if (minorArcaneBolt) {
+            // Basic mage attack: a compact scarlet lance, deliberately unlike Magic Missile.
+            ctx.save();
+            ctx.globalCompositeOperation = "lighter";
+            ctx.globalAlpha = auraFade;
+            const core = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, tile * 0.18);
+            core.addColorStop(0, "rgba(255,242,200,0.98)");
+            core.addColorStop(0.22, "rgba(255,104,58,0.9)");
+            core.addColorStop(0.62, "rgba(182,20,27,0.35)");
+            core.addColorStop(1, "rgba(110,0,8,0)");
+            ctx.fillStyle = core;
+            ctx.beginPath(); ctx.arc(head.x, head.y, tile * 0.18, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = "rgba(255,96,55,0.72)";
+            ctx.lineWidth = Math.max(1, tile * 0.018);
+            for (let spark = 0; spark < 12; spark += 1) {
+              const a = m.seed + spark * 2.399 + this.time * (2.2 + spark * 0.09);
+              const radius = tile * (0.12 + ((spark * 7) % 6) * 0.018);
+              const x = head.x + Math.cos(a) * radius;
+              const y = head.y + Math.sin(a) * radius * 0.55;
+              ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - Math.cos(a) * tile * 0.065, y - Math.sin(a) * tile * 0.04); ctx.stroke();
+            }
+            ctx.restore();
+          }
+                    const projectileCore = m.kind === "fireball" ? this.art.fireballCore : m.kind === "causticVenom" ? this.art.causticVenomCore : null;
+          if (m.kind === "longShot" && this.art.arrowCore) {
+            // One shared approved arrow asset for normal shots, Multi Shot, Long Shot and Piercing Shot.
+            const angle = Math.atan2(dyT, dxT);
+            ctx.save();
+            ctx.translate(head.x, head.y);
+            ctx.rotate(angle);
+            ctx.globalCompositeOperation = "screen";
+            ctx.globalAlpha = auraFade;
+            ctx.drawImage(this.art.arrowCore, -tile * 0.56, -tile * 0.22, tile * 1.12, tile * 0.44);
+            ctx.restore();
+          }
+          if (projectileCore) {
+            // Dense physical flame core; black source pixels disappear under additive blend.
+            const img = projectileCore;
+            // Crop away the intentionally huge black 4K margin. Only the real flame core is
+            // scaled to the map, where it remains visibly layered with the code trail.
+            const crop = Math.min(img.naturalWidth, img.naturalHeight) * 0.58;
+            const sx = (img.naturalWidth - crop) / 2;
+            const sy = (img.naturalHeight - crop) / 2;
+            const size = tile * (1.02 + Math.sin(this.time * 13 + m.seed) * 0.06);
+            ctx.save();
+            ctx.globalCompositeOperation = "lighter";
+            ctx.globalAlpha = auraFade;
+            ctx.drawImage(img, sx, sy, crop, crop, head.x - size / 2, head.y - size / 2, size, size);
+            ctx.restore();
+          }
+          ctx.fillStyle = `rgba(255,255,255,${(physicalArrow ? 0 : 0.95) * auraFade})`;
           ctx.beginPath();
-          ctx.arc(head.x, head.y, tile * 0.085, 0, Math.PI * 2);
+          ctx.arc(head.x, head.y, tile * (minorArcaneBolt ? 0.05 : 0.085), 0, Math.PI * 2);
           ctx.fill();
         }
       }

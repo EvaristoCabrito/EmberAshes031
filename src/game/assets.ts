@@ -185,6 +185,9 @@ export async function loadGameArt(): Promise<GameArt> {
     }),
   );
   const impact = await Promise.all([1, 2, 3, 4].map((n) => loadImage(`/game/fx/impact-${n}.png`)));
+  const fireballCore = await loadImage("/game/fx/fireball-core-v1.png?v=1");
+  const causticVenomCore = await loadImage("/game/fx/caustic-venom-core-v1.png?v=1");
+  const arrowCore = await loadImage("/game/fx/arrow-002.png?v=1");
   const backdrops: Record<string, HTMLImageElement> = {
     profundezas: await loadImage("/game/assets/profundezas-bg.jpg?v=2"),
   };
@@ -210,5 +213,5 @@ export async function loadGameArt(): Promise<GameArt> {
       side: await loadImage("/game/sprites/butcher/front.png"),
     },
   };
-  return { tiles, decorations, sprites, attacks, casts, walks, idles, walkDirs, impact, backdrops };
+  return { tiles, decorations, sprites, attacks, casts, walks, idles, walkDirs, impact, fireballCore, causticVenomCore, arrowCore, backdrops };
 }
