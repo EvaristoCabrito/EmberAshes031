@@ -589,12 +589,39 @@ export interface BattleUnitSnap {
   x: number;
   y: number;
   hp: number;
+  maxHp: number;
+  atk: number;
+  mag: number;
+  def: number;
+  res: number;
+  mov: number;
+  minRange: number;
+  maxRange: number;
   moved: boolean;
+  acted: boolean;
   facing: 1 | -1;
   alive: boolean;
+  fade: number;
   level: number;
+  xp: number;
   bag: Bag;
   spells: Spells;
+  weaponId: string | null;
+  weaponEnh: number;
+  shock: { dice: number; faces: number; bonus: number } | null;
+  diseased: boolean;
+  diseaseBase: { atk: number; mag: number; def: number; res: number; mov: number } | null;
+  poisoned: boolean;
+  stunned: boolean;
+  stunTurns: number;
+  crippled: boolean;
+  offHandId: string | null;
+  gear: Partial<Record<EquipSlot, string>>;
+  summoned: boolean;
+  asleep: boolean;
+  sleepTurns: number;
+  guaranteedDrop: boolean;
+  moveBudgetUsed: number;
 }
 
 export interface BattleSnapshot {
@@ -602,6 +629,24 @@ export interface BattleSnapshot {
   turn: number;
   phase: Phase;
   units: BattleUnitSnap[];
+  tiles: TerrainId[];
+  decorations: DecorationPlacement[];
+  turnOrder: string[];
+  activeUnitId: string | null;
+  selectedId: string | null;
+  lootEmber: number;
+  lootWeapons: string[];
+  lootEquipment: string[];
+  ownedWeapons: string[];
+  webZones: { cells: string[]; roundsLeft: number }[];
+  auraZones: { cells: string[]; roundsLeft: number; kind: "protection" | "intimidation"; side: Side; pct: number }[];
+  log: string[];
+  winAvailable: boolean;
+  chestLoot: { unitName: string; ember: number; items: { name: string; icon: string; tip?: string }[] } | null;
+  turnRestrained: boolean;
+  /** True when beginUnitTurn already ran for the current actor — load must not re-apply
+   * start-of-turn echo/poison/stun. False when the next unit hasn't opened their turn yet. */
+  turnBegan: boolean;
 }
 
 export interface SaveData {
@@ -634,6 +679,9 @@ export interface SaveData {
   muted: boolean;
   updatedAt: number;
   pendingMission: string | null;
+  /** Mid-battle board: set by Save during a fight so Load resumes that combat instead of
+   * restarting it from the briefing. Cleared on victory, defeat, or a fresh mission start. */
+  battle: BattleSnapshot | null;
 }
 
 export interface SaveBank {

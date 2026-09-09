@@ -1094,19 +1094,20 @@ export function weightedWeaponPick(rng: () => number, ids: string[] = Object.key
   const entries: [string, number][] = pool.map((id): [string, number] => [id, priceWeight(WEAPONS[id]?.price ?? 100)]);
   return weightedPick(rng, entries);
 }
-export const BAG_MAX = 9;
+export const BAG_MAX = 5;
 
-/** How many of each potion a single hero can carry at once — a "goes to whoever has room
+/** How many of each potion a single hero can carry at once — a "goes to whoever acts
  * next" chest-loot overflow (see BattleEngine.useLockpick) keeps a full-up party from
- * losing drops outright. */
+ * losing drops outright; if every living hero is already at this cap, the potion is
+ * discarded. */
 export const POTION_CARRY_MAX: Record<PotionId, number> = {
   weak: 5,
   mid: 5,
   potent: 5,
-  disease: 4,
-  manaSmall: 2,
-  manaMid: 2,
-  manaLarge: 2,
+  disease: 5,
+  manaSmall: 5,
+  manaMid: 5,
+  manaLarge: 5,
 };
 
 export const POTION_PRICE: Record<PotionId, number> = {
@@ -1553,11 +1554,12 @@ export function potionTooltip(kind: PotionId): string {
     const n = p.manaRestore ?? 0;
     lines.push(`Restaura ${n} uso${n === 1 ? "" : "s"} de cada magia disponível (sem passar do máximo)`, "Gasta a ação do turno");
   }
+  lines.push(`Máximo ${POTION_CARRY_MAX[kind]} por personagem`);
   return lines.join("\n");
 }
 
 export function lockpickTooltip(): string {
-  return "Gazua\nAbre um baú ou porta trancada adjacente.\nGasta a ação do turno.";
+  return `Gazua\nAbre um baú ou porta trancada adjacente.\nGasta a ação do turno.\nMáximo ${BAG_MAX} por personagem`;
 }
 
 export function equipmentIcon(id: string): string {

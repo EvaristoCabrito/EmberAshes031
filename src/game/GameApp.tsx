@@ -25,7 +25,7 @@ import {
   writeSlot,
   selectSlot,
 } from "./save";
-import type { ClassId, EquipSlot, GameArt, GrowthLine, HudSnapshot, Mission, PotionId, SaveBank, SaveData, ScreenId, SpellKind, Spawn, TerrainId, UnitPublic, WinCondition, WorldLocation } from "./types";
+import type { BattleSnapshot, ClassId, EquipSlot, GameArt, GrowthLine, HudSnapshot, Mission, PotionId, SaveBank, SaveData, ScreenId, SpellKind, Spawn, TerrainId, UnitPublic, WinCondition, WorldLocation } from "./types";
 
 /** A map JSON write updates Vite's module list and can reload the app. This one-shot
  * snapshot restores the editor instead of sending the author to the title screen. */
@@ -472,6 +472,7 @@ export function GameApp() {
   const [testEmber, setTestEmber] = useState(TEST_EMBER);
   const awardedRef = useRef<string | null>(null);
   const combatStartRef = useRef<SaveData | null>(null);
+  const resumeBattleRef = useRef<BattleSnapshot | null>(null);
   const [slotMode, setSlotMode] = useState<"new" | "continue" | "save" | "load" | null>(null);
   const [overwrite, setOverwrite] = useState<number | null>(null);
 
@@ -533,10 +534,26 @@ export function GameApp() {
     return next;
   };
 
+  const withLiveBattle = (data: SaveData): SaveData => {
+    if (!engine || !missionId) return data;
+    return {
+      ...data,
+      pendingMission: missionId,
+      battle: engine.captureSnapshot(),
+      bags: { ...data.bags, ...engine.remainingBags() },
+      unitHp: { ...data.unitHp, ...engine.battlePlayerHp() },
+    };
+  };
+
   const enterFromSave = (rec: SaveData) => {
     setTestMode(false);
     setLastGrowth(null);
     setLastLoot([]);
+    if (rec.battle && rec.pendingMission && resolveMission(rec.pendingMission)) {
+      resumeBattleRef.current = rec.battle;
+      setMissionId(rec.pendingMission);
+      return;
+    }
     if (rec.pendingMission && resolveMission(rec.pendingMission)) {
       setMissionId(rec.pendingMission);
       setScreen("briefing");
@@ -547,7 +564,7 @@ export function GameApp() {
   };
 
   const startBattle = useCallback(
-    (id: string, carried = save.unitHp, override?: Mission, playerLevels?: Record<string, number>, enemyLevels?: Record<string, number>) => {
+    (id: string, carried = save.unitHp, override?: Mission, playerLevels?: Record<string, number>, enemyLevels?: Record<string, number>, resume?: BattleSnapshot) => {
       if (!art) return;
       // A real mission start (no override) always clears any leftover playtest identity —
       // otherwise a stale customMission from an earlier Map Editor session can collide
@@ -578,10 +595,13 @@ export function GameApp() {
           levels,
           bags,
           pendingMission: id,
+          battle: resume ?? null,
           muted,
         };
         combatStartRef.current = snapshot;
-        persistCurrent(snapshot);
+        // A load already wrote this slot — persisting again would smash the just-selected
+        // save with whatever slot was active on the previous render.
+        if (!resume) persistCurrent(snapshot);
       }
       const promotions = testMode ? {} : save.promotions;
       const weapons = testMode
@@ -595,7 +615,7 @@ export function GameApp() {
               .filter((entry): entry is [string, string] => !!entry[1]),
           );
       // Every worn slot, not just the off-hand: gear contributes stats now (gearStatBonus),
-      // so the battle needs the whole map rather than the one slot combat used to read.
+      // so the battle needs the whole map rather than the one slot combat already read.
       const equipment = testMode ? undefined : save.equipment;
       const ownedWeaponIds = testMode ? undefined : Object.keys(save.weapons);
       // Spell tier uses don't refill between missions within the same world-map location's
@@ -606,6 +626,7 @@ export function GameApp() {
       const scenarioStart = !loc || loc.id === "stonebridge" || loc.missionIds.every((mid) => !save.completed.includes(mid));
       const spellSpent = testMode || scenarioStart ? undefined : save.spellUses;
       const battle = new BattleEngine(m, art, { hp, levels, bags, xp, promotions, weapons, offHand, equipment, enemyLevels, ownedWeaponIds, spellSpent }, Date.now() % 100000);
+      if (resume && resume.missionId === m.id) battle.applySnapshot(resume);
       if (typeof window !== "undefined" && window.innerWidth < 720) battle.zoom = 0;
       awardedRef.current = null;
       setEngine(battle);
@@ -617,6 +638,13 @@ export function GameApp() {
     },
     [art, save, testMode, muted, bank, campaignLocations],
   );
+
+  useEffect(() => {
+    const snap = resumeBattleRef.current;
+    if (!art || !snap || !missionId) return;
+    startBattle(missionId, save.unitHp, undefined, undefined, undefined, snap);
+    resumeBattleRef.current = null;
+  }, [art, missionId, startBattle, save.unitHp]);
 
   const onHud = useCallback((next: HudSnapshot) => {
     setHud(next);
@@ -740,6 +768,7 @@ export function GameApp() {
         emberSeeded: true,
         muted,
         pendingMission: null,
+        battle: null,
       });
     }
   }, [engine, mission, save, testMode, muted, bank]);
@@ -777,7 +806,7 @@ export function GameApp() {
     // It must still launch its own battle when selected from the campaign.
     if (missionId === "estalagem") {
       const completed = save.completed.includes(missionId) ? save.completed : [...save.completed, missionId];
-      if (!testMode) persistCurrent({ ...save, completed, pendingMission: null });
+      if (!testMode) persistCurrent({ ...save, completed, pendingMission: null, battle: null });
       setScreen("inn");
       return;
     }
@@ -1106,22 +1135,22 @@ export function GameApp() {
           onEquipWeapon={(hero, weaponId, alsoOwn) => {
             const rec = activeSave(bank);
             if (!weaponId) {
-              persistCurrent(unequipSharedWeapon(rec, hero));
+              persistCurrent(withLiveBattle(unequipSharedWeapon(rec, hero)));
               return;
             }
             const owned = alsoOwn && rec.weapons[weaponId] == null ? { ...rec, weapons: { ...rec.weapons, [weaponId]: 0 } } : rec;
             const next = equipSharedWeapon(owned, hero, weaponId);
-            if (next) persistCurrent(next);
+            if (next) persistCurrent(withLiveBattle(next));
           }}
           onEquipItem={(hero, slot, itemId, alsoOwn) => {
             const rec = activeSave(bank);
             if (!itemId) {
-              persistCurrent(unequipSharedItem(rec, hero, slot));
+              persistCurrent(withLiveBattle(unequipSharedItem(rec, hero, slot)));
               return;
             }
             const owned = alsoOwn ? { ...rec, looseEquipment: { ...rec.looseEquipment, [itemId]: (rec.looseEquipment[itemId] ?? 0) + 1 } } : rec;
             const next = equipSharedItem(owned, hero, slot, itemId);
-            if (next) persistCurrent(next);
+            if (next) persistCurrent(withLiveBattle(next));
           }}
           onHud={onHud}
           onPause={() => setPaused(true)}
@@ -1266,7 +1295,29 @@ export function GameApp() {
               enterFromSave(rec);
               return;
             }
-            const snapshot = combatStartRef.current ?? { ...save, pendingMission: missionId, muted };
+            const snapshot = (() => {
+              if (engine && missionId) {
+                const levels = { ...save.levels };
+                const xp = { ...save.xp };
+                for (const u of engine.units) {
+                  if (u.side !== "player" || u.summoned) continue;
+                  levels[u.name] = u.level;
+                  xp[u.name] = u.xp;
+                }
+                return {
+                  ...save,
+                  pendingMission: missionId,
+                  battle: engine.captureSnapshot(),
+                  bags: { ...save.bags, ...engine.remainingBags() },
+                  unitHp: { ...save.unitHp, ...engine.battlePlayerHp() },
+                  spellUses: engine.spentTiers(),
+                  levels,
+                  xp,
+                  muted,
+                };
+              }
+              return combatStartRef.current ?? { ...save, pendingMission: missionId, muted, battle: save.battle ?? null };
+            })();
             const next = writeSlot(bank, index, snapshot);
             applySlot(next);
             setSlotMode(null);
@@ -1505,7 +1556,7 @@ const SKILL_DAMAGE_ROWS: { name: string; cls: ClassId; tier: SpellTier; formula:
     cls: SKILL_CLASS.lightning!,
     tier: spellTier("lightning")!,
     formula: (mag: number) => lightningFormula(mag),
-    note: `Eco em outro alvo adjacente: ${diceFormula(LIGHTNING.echoDice, LIGHTNING.echoFaces, LIGHTNING.echoBonus)}.`,
+    note: `Atravessa cobertura e barricadas. Eco em outro alvo adjacente: ${diceFormula(LIGHTNING.echoDice, LIGHTNING.echoFaces, LIGHTNING.echoBonus)}.`,
   },
   {
     name: PIERCING.name,
@@ -1776,7 +1827,9 @@ function HelpModal({ onClose }: { onClose: () => void }) {
             <div>
               <p className="text-sm font-medium">Poções em baú (por baú)</p>
               <p className="text-xs text-muted leading-relaxed mb-2">
-                Todo baú dá Ember + uma poção garantida (sorteada abaixo) + uma chance separada de item.
+                Todo baú dá Ember + uma poção garantida (sorteada abaixo) + uma chance separada de item. Se quem abriu já
+                estiver no máximo daquela poção (5), ela passa para o próximo personagem que vai agir; se todos estiverem
+                cheios, é descartada.
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs tabular-nums border-collapse">

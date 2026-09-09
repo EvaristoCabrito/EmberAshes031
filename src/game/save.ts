@@ -1,10 +1,10 @@
-import { EQUIPMENT, EXP_TO_LEVEL, MAX_LEVEL, POTION_CARRY_MAX, PROMOTIONS, WEAPONS, emberFromCompleted, starterWeaponFor, startingBags } from "./data";
+import { EQUIPMENT, EXP_TO_LEVEL, MAX_LEVEL, POTION_CARRY_MAX, BAG_MAX, PROMOTIONS, WEAPONS, emberFromCompleted, starterWeaponFor, startingBags } from "./data";
 import { ALL_MISSIONS } from "./mapstore";
 import { TIER_KEYS } from "./types";
-import type { Bag, ClassId, EquipSlot, SaveBank, SaveData, TierKey } from "./types";
+import type { Bag, BattleSnapshot, BattleUnitSnap, ClassId, EquipSlot, Phase, SaveBank, SaveData, Side, TerrainId, TierKey } from "./types";
 
 export const SLOT_COUNT = 5;
-export const SAVE_VERSION = 10;
+export const SAVE_VERSION = 11;
 const BANK_KEY = "ember-save-bank";
 const SAVE_KEY = "ember-save";
 const SAVE_BAK_KEY = "ember-save.bak";
@@ -43,7 +43,7 @@ function cloneBags(src?: Record<string, Bag>): Record<string, Bag> {
       manaSmall: clampInt(b.manaSmall, 0, POTION_CARRY_MAX.manaSmall),
       manaMid: clampInt(b.manaMid, 0, POTION_CARRY_MAX.manaMid),
       manaLarge: clampInt(b.manaLarge, 0, POTION_CARRY_MAX.manaLarge),
-      lockpick: clampInt(b.lockpick, 0, 9),
+      lockpick: clampInt(b.lockpick, 0, BAG_MAX),
     };
   }
   return base;
@@ -148,7 +148,7 @@ function cleanLooseEquipment(raw: unknown): Record<string, number> {
 
 function cleanSpellUses(raw: unknown): Record<string, Partial<Record<TierKey, number>>> {
   const out: Record<string, Partial<Record<TierKey, number>>> = {};
-  if (!raw || typeof raw !== "object") return out;
+  if (!raw || typeof raw !== "object") return {};
   for (const [hero, tiers] of Object.entries(raw as Record<string, unknown>)) {
     if (!HEROES.includes(hero as (typeof HEROES)[number]) || !tiers || typeof tiers !== "object") continue;
     const cleanTiers: Partial<Record<TierKey, number>> = {};
@@ -160,6 +160,194 @@ function cleanSpellUses(raw: unknown): Record<string, Partial<Record<TierKey, nu
     if (Object.keys(cleanTiers).length > 0) out[hero] = cleanTiers;
   }
   return out;
+}
+
+function cleanBag(raw: unknown): Bag {
+  const b = (raw && typeof raw === "object" ? raw : {}) as Partial<Bag>;
+  return {
+    mid: clampInt(b.mid, 0, POTION_CARRY_MAX.mid),
+    weak: clampInt(b.weak, 0, POTION_CARRY_MAX.weak),
+    potent: clampInt(b.potent, 0, POTION_CARRY_MAX.potent),
+    disease: clampInt(b.disease, 0, POTION_CARRY_MAX.disease),
+    manaSmall: clampInt(b.manaSmall, 0, POTION_CARRY_MAX.manaSmall),
+    manaMid: clampInt(b.manaMid, 0, POTION_CARRY_MAX.manaMid),
+    manaLarge: clampInt(b.manaLarge, 0, POTION_CARRY_MAX.manaLarge),
+    lockpick: clampInt(b.lockpick, 0, BAG_MAX),
+  };
+}
+
+function cleanBattleUnit(raw: unknown): BattleUnitSnap | null {
+  if (!raw || typeof raw !== "object") return null;
+  const u = raw as Record<string, unknown>;
+  if (typeof u.id !== "string" || typeof u.name !== "string" || typeof u.classId !== "string") return null;
+  const side = u.side === "player" || u.side === "enemy" || u.side === "neutral" ? (u.side as Side) : null;
+  if (!side) return null;
+  const facing: 1 | -1 = u.facing === -1 ? -1 : 1;
+  const shock =
+    u.shock && typeof u.shock === "object"
+      ? {
+          dice: clampInt((u.shock as { dice?: unknown }).dice, 0, 20),
+          faces: clampInt((u.shock as { faces?: unknown }).faces, 1, 20),
+          bonus: clampInt((u.shock as { bonus?: unknown }).bonus, 0, 40),
+        }
+      : null;
+  const diseaseBase =
+    u.diseaseBase && typeof u.diseaseBase === "object"
+      ? {
+          atk: clampInt((u.diseaseBase as { atk?: unknown }).atk, 0, 99),
+          mag: clampInt((u.diseaseBase as { mag?: unknown }).mag, 0, 99),
+          def: clampInt((u.diseaseBase as { def?: unknown }).def, 0, 99),
+          res: clampInt((u.diseaseBase as { res?: unknown }).res, 0, 99),
+          mov: clampInt((u.diseaseBase as { mov?: unknown }).mov, 0, 20),
+        }
+      : null;
+  const gear: Partial<Record<EquipSlot, string>> = {};
+  if (u.gear && typeof u.gear === "object") {
+    for (const [slot, itemId] of Object.entries(u.gear as Record<string, unknown>)) {
+      if (typeof itemId === "string" && EQUIPMENT[itemId]?.slot === slot) gear[slot as EquipSlot] = itemId;
+    }
+  }
+  const spellsRaw = (u.spells && typeof u.spells === "object" ? u.spells : {}) as Record<string, unknown>;
+  const spells = {
+    tier1: clampInt(spellsRaw.tier1, 0, 99),
+    tier2: clampInt(spellsRaw.tier2, 0, 99),
+    tier3: clampInt(spellsRaw.tier3, 0, 99),
+    tier4: clampInt(spellsRaw.tier4, 0, 99),
+    tier5: clampInt(spellsRaw.tier5, 0, 99),
+    tier6: clampInt(spellsRaw.tier6, 0, 99),
+    tier7: clampInt(spellsRaw.tier7, 0, 99),
+    tier8: clampInt(spellsRaw.tier8, 0, 99),
+    tier9: clampInt(spellsRaw.tier9, 0, 99),
+    tier10: clampInt(spellsRaw.tier10, 0, 99),
+  };
+  return {
+    id: u.id,
+    name: u.name,
+    classId: u.classId as ClassId,
+    side,
+    x: clampInt(u.x, 0, 64),
+    y: clampInt(u.y, 0, 64),
+    hp: clampInt(u.hp, 0, 999),
+    maxHp: clampInt(u.maxHp, 1, 999),
+    atk: clampInt(u.atk, 0, 99),
+    mag: clampInt(u.mag, 0, 99),
+    def: clampInt(u.def, 0, 99),
+    res: clampInt(u.res, 0, 99),
+    mov: clampInt(u.mov, 0, 20),
+    minRange: clampInt(u.minRange, 0, 20),
+    maxRange: clampInt(u.maxRange, 0, 20),
+    moved: u.moved === true,
+    acted: u.acted === true,
+    facing,
+    alive: u.alive !== false,
+    fade: Math.min(1, Math.max(0, Number(u.fade) || 1)),
+    level: clampInt(u.level, 1, MAX_LEVEL),
+    xp: clampInt(u.xp, 0, EXP_TO_LEVEL - 1),
+    bag: cleanBag(u.bag),
+    spells,
+    weaponId: typeof u.weaponId === "string" && WEAPONS[u.weaponId] ? u.weaponId : null,
+    weaponEnh: clampInt(u.weaponEnh, 0, 5),
+    shock,
+    diseased: u.diseased === true,
+    diseaseBase,
+    poisoned: u.poisoned === true,
+    stunned: u.stunned === true,
+    stunTurns: clampInt(u.stunTurns, 0, 9),
+    crippled: u.crippled === true,
+    offHandId: typeof u.offHandId === "string" && EQUIPMENT[u.offHandId] ? u.offHandId : null,
+    gear,
+    summoned: u.summoned === true,
+    asleep: u.asleep === true,
+    sleepTurns: clampInt(u.sleepTurns, 0, 20),
+    guaranteedDrop: u.guaranteedDrop === true,
+    moveBudgetUsed: clampInt(u.moveBudgetUsed, 0, 20),
+  };
+}
+
+function cleanBattle(raw: unknown, pendingMission: string | null): BattleSnapshot | null {
+  if (!raw || typeof raw !== "object") return null;
+  const b = raw as Record<string, unknown>;
+  const missionId = typeof b.missionId === "string" && MISSION_IDS.has(b.missionId) ? b.missionId : pendingMission;
+  if (!missionId || !MISSION_IDS.has(missionId)) return null;
+  if (!Array.isArray(b.units) || !Array.isArray(b.tiles)) return null;
+  const units: BattleUnitSnap[] = [];
+  for (const item of b.units) {
+    const u = cleanBattleUnit(item);
+    if (u) units.push(u);
+  }
+  if (units.length === 0) return null;
+  const tiles = (b.tiles as unknown[]).filter((t): t is TerrainId => typeof t === "string") as TerrainId[];
+  const decorations = Array.isArray(b.decorations)
+    ? (b.decorations as unknown[])
+        .filter((d): d is { id: string; x: number; y: number; rot?: number } => !!d && typeof d === "object" && typeof (d as { id?: unknown }).id === "string")
+        .map((d) => ({
+          id: (d as { id: string }).id,
+          x: clampInt((d as { x?: unknown }).x, 0, 64),
+          y: clampInt((d as { y?: unknown }).y, 0, 64),
+          rot: typeof (d as { rot?: unknown }).rot === "number" ? clampInt((d as { rot?: unknown }).rot, 0, 5) : undefined,
+        }))
+    : [];
+  const turnOrder = Array.isArray(b.turnOrder) ? (b.turnOrder as unknown[]).filter((id): id is string => typeof id === "string") : units.map((u) => u.id);
+  const webZones = Array.isArray(b.webZones)
+    ? (b.webZones as unknown[]).flatMap((z) => {
+        if (!z || typeof z !== "object") return [];
+        const cells = Array.isArray((z as { cells?: unknown }).cells)
+          ? ((z as { cells: unknown[] }).cells.filter((c): c is string => typeof c === "string"))
+          : [];
+        return [{ cells, roundsLeft: clampInt((z as { roundsLeft?: unknown }).roundsLeft, 0, 20) }];
+      })
+    : [];
+  const auraZones = Array.isArray(b.auraZones)
+    ? (b.auraZones as unknown[]).flatMap((z) => {
+        if (!z || typeof z !== "object") return [];
+        const kindRaw = (z as { kind?: unknown }).kind;
+        const sideRaw = (z as { side?: unknown }).side;
+        const kind: "protection" | "intimidation" | null = kindRaw === "protection" || kindRaw === "intimidation" ? kindRaw : null;
+        const side: Side | null = sideRaw === "player" || sideRaw === "enemy" || sideRaw === "neutral" ? sideRaw : null;
+        if (!kind || !side) return [];
+        const cells = Array.isArray((z as { cells?: unknown }).cells)
+          ? ((z as { cells: unknown[] }).cells.filter((c): c is string => typeof c === "string"))
+          : [];
+        return [{ cells, roundsLeft: clampInt((z as { roundsLeft?: unknown }).roundsLeft, 0, 20), kind, side, pct: Math.min(1, Math.max(0, Number((z as { pct?: unknown }).pct) || 0)) }];
+      })
+    : [];
+  const chestLootRaw = b.chestLoot && typeof b.chestLoot === "object" ? (b.chestLoot as Record<string, unknown>) : null;
+  const chestLoot = chestLootRaw && typeof chestLootRaw.unitName === "string"
+    ? {
+        unitName: chestLootRaw.unitName,
+        ember: clampInt(chestLootRaw.ember, 0, 999),
+        items: Array.isArray(chestLootRaw.items)
+          ? (chestLootRaw.items as unknown[]).flatMap((item) => {
+              if (!item || typeof item !== "object" || typeof (item as { name?: unknown }).name !== "string") return [];
+              const it = item as { name: string; icon?: unknown; tip?: unknown };
+              return [{ name: it.name, icon: typeof it.icon === "string" ? it.icon : "", tip: typeof it.tip === "string" ? it.tip : undefined }];
+            })
+          : [],
+      }
+    : null;
+  const phase: Phase = b.phase === "enemy" ? "enemy" : "player";
+  return {
+    missionId,
+    turn: clampInt(b.turn, 1, 999),
+    phase,
+    units,
+    tiles,
+    decorations,
+    turnOrder,
+    activeUnitId: typeof b.activeUnitId === "string" ? b.activeUnitId : null,
+    selectedId: typeof b.selectedId === "string" ? b.selectedId : null,
+    lootEmber: clampInt(b.lootEmber, 0, 9999),
+    lootWeapons: Array.isArray(b.lootWeapons) ? (b.lootWeapons as unknown[]).filter((id): id is string => typeof id === "string" && !!WEAPONS[id]) : [],
+    lootEquipment: Array.isArray(b.lootEquipment) ? (b.lootEquipment as unknown[]).filter((id): id is string => typeof id === "string" && !!EQUIPMENT[id]) : [],
+    ownedWeapons: Array.isArray(b.ownedWeapons) ? (b.ownedWeapons as unknown[]).filter((id): id is string => typeof id === "string") : [],
+    webZones,
+    auraZones,
+    log: Array.isArray(b.log) ? (b.log as unknown[]).filter((line): line is string => typeof line === "string").slice(-200) : [],
+    winAvailable: b.winAvailable === true,
+    chestLoot,
+    turnRestrained: b.turnRestrained === true,
+    turnBegan: b.turnBegan !== false,
+  };
 }
 
 function cleanHp(raw: unknown): Record<string, number> {
@@ -205,6 +393,7 @@ export function emptySave(muted = false): SaveData {
     muted,
     updatedAt: Date.now(),
     pendingMission: null,
+    battle: null,
   };
 }
 
@@ -278,6 +467,7 @@ function migrateRecord(raw: Record<string, unknown>, muted: boolean): SaveData {
     muted: raw.muted === true || muted,
     updatedAt: typeof raw.updatedAt === "number" && raw.updatedAt > 0 ? raw.updatedAt : Date.now(),
     pendingMission: pending,
+    battle: cleanBattle(raw.battle, pending),
   };
 }
 
@@ -311,7 +501,7 @@ function writeKey(key: string, value: string): boolean {
 
 function slotOccupied(s: SaveData | null): boolean {
   if (!s) return false;
-  return s.completed.length > 0 || Object.keys(s.unitHp).length > 0 || !!s.pendingMission;
+  return s.completed.length > 0 || Object.keys(s.unitHp).length > 0 || !!s.pendingMission || !!s.battle;
 }
 
 function migrateLegacyIntoBank(): SaveBank {
@@ -406,6 +596,10 @@ export function formatStamp(ts: number): string {
 
 export function slotProgress(slot: SaveData | null): { title: string; detail: string } {
   if (!slot || !slotOccupied(slot)) return { title: "Vazio", detail: "Nenhuma campanha" };
+  if (slot.battle) {
+    const m = ALL_MISSIONS.find((x) => x.id === slot.battle!.missionId);
+    return { title: m ? m.title : slot.battle.missionId, detail: `Em combate · turno ${slot.battle.turn}` };
+  }
   if (slot.pendingMission) {
     const m = ALL_MISSIONS.find((x) => x.id === slot.pendingMission);
     return { title: m ? m.title : slot.pendingMission, detail: "Início do combate" };

@@ -34,6 +34,8 @@ import {
 import { sfxPlay } from "./audio";
 import type {
   Bag,
+  BattleSnapshot,
+  BattleUnitSnap,
   ClassId,
   DecorationPlacement,
   Forecast,
@@ -544,6 +546,66 @@ function spawnUnit(spawn: Mission["playerSpawns"][number], side: Unit["side"], i
   };
 }
 
+function unitFromSnap(snap: BattleUnitSnap): Unit {
+  const cls = CLASSES[snap.classId];
+  return {
+    id: snap.id,
+    name: snap.name,
+    classId: snap.classId,
+    className: cls?.name ?? snap.classId,
+    role: cls?.role ?? "",
+    side: snap.side,
+    sprite: cls?.sprite ?? "soldier",
+    x: snap.x,
+    y: snap.y,
+    hp: snap.hp,
+    maxHp: snap.maxHp,
+    atk: snap.atk,
+    mag: snap.mag,
+    def: snap.def,
+    res: snap.res,
+    mov: snap.mov,
+    minRange: snap.minRange,
+    maxRange: snap.maxRange,
+    moved: snap.moved,
+    acted: snap.acted,
+    facing: snap.facing,
+    walkPose: "front",
+    alive: snap.alive,
+    drawX: snap.x,
+    drawY: snap.y,
+    flash: 0,
+    levelGlow: 0,
+    healGlow: 0,
+    fade: snap.fade,
+    bob: 0,
+    level: snap.level,
+    xp: snap.xp,
+    bag: { ...snap.bag },
+    spells: { ...snap.spells },
+    weaponId: snap.weaponId,
+    weaponEnh: snap.weaponEnh,
+    size: cls?.size ?? 1,
+    footprintW: cls?.footprintW,
+    footprintH: cls?.footprintH,
+    footprintOffsets: cls?.footprintOffsets,
+    shock: snap.shock ? { ...snap.shock } : null,
+    diseased: snap.diseased,
+    diseaseBase: snap.diseaseBase ? { ...snap.diseaseBase } : null,
+    poisoned: snap.poisoned,
+    stunned: snap.stunned,
+    stunTurns: snap.stunTurns,
+    crippled: snap.crippled,
+    offHandId: snap.offHandId,
+    gear: { ...snap.gear },
+    summoned: snap.summoned,
+    asleep: snap.asleep,
+    sleepTurns: snap.sleepTurns,
+    guaranteedDrop: snap.guaranteedDrop,
+    moveBudgetUsed: snap.moveBudgetUsed,
+  };
+}
+
 /** Whether a unit gets its own turn. Neutrals hold their ground: they are placed, they can
  * be attacked, and they do nothing until something wakes them (see BattleEngine.provoke). */
 function takesTurns(u: Unit): boolean {
@@ -680,6 +742,9 @@ export class BattleEngine {
   /** Set while mode === "awaitPotion": which potion the selected unit is about to use on
    * whichever valid target (self or an adjacent ally — see confirmPotionAt) is tapped next. */
   private potionAim: PotionId | null = null;
+  /** After a mid-battle load, the next beginUnitTurn must not re-run start-of-turn effects
+   * (echo, poison, stun skip) — those already happened on the turn we saved in the middle of. */
+  private skipStartOfTurn = false;
 
   constructor(mission: Mission, art: GameArt, roster: Roster, seed = 1) {
     this.mission = mission;
@@ -690,7 +755,7 @@ export class BattleEngine {
     this.tiles = parseLayout(mission.layout);
     this.tileVariants = mission.tileVariants ?? [];
     this.tileRots = mission.tileRots ?? [];
-    this.decorations = mission.decorations ?? [];
+    this.decorations = (mission.decorations ?? []).map((d) => ({ ...d }));
     // Art is loaded once at boot — a decoration added later (or after HMR) is in
     // DECORATIONS and in the editor <img>, but missing from art.decorations, so combat
     // used to skip it. Fill any hole so Testar paints the same props the editor lists.
@@ -914,20 +979,35 @@ export class BattleEngine {
   }
 
   /** Hands a found potion to `starter` (the one who opened the chest), or — if their bag for
-   * that kind is already full — to the next alive party member in line with room. Returns
-   * false only if the whole party is capped out on that potion, so the drop is lost. */
-  private givePotion(starter: Unit, kind: PotionId): boolean {
+   * that kind is already full — to the next living party member who will act, walking the
+   * current initiative order and wrapping into the next round. Returns the unit who took it,
+   * or null if the whole party is capped out so the drop is discarded. */
+  private givePotion(starter: Unit, kind: PotionId): Unit | null {
     const cap = POTION_CARRY_MAX[kind];
-    const order = [starter, ...this.units.filter((x) => x !== starter)];
-    for (const target of order) {
+    const orderIds = this.turnOrder.length > 0 ? this.turnOrder : this.units.map((u) => u.id);
+    const startIdx = Math.max(0, orderIds.indexOf(starter.id));
+    const sequenced: Unit[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < orderIds.length; i++) {
+      const id = orderIds[(startIdx + i) % orderIds.length]!;
+      const u = this.units.find((x) => x.id === id);
+      if (!u || seen.has(u.id)) continue;
+      seen.add(u.id);
+      sequenced.push(u);
+    }
+    for (const u of this.units) {
+      if (seen.has(u.id)) continue;
+      sequenced.push(u);
+    }
+    for (const target of sequenced) {
       if (target.side !== "player" || !target.alive) continue;
       const have = target.bag[kind] ?? 0;
       if (have < cap) {
         target.bag[kind] = have + 1;
-        return true;
+        return target;
       }
     }
-    return false;
+    return null;
   }
 
   /** Hero name → tier key → spell uses spent so far this scenario, for persisting into
@@ -948,6 +1028,156 @@ export class BattleEngine {
       out[u.name] = perTier;
     }
     return out;
+  }
+
+  /** Freeze the live board so a save can resume this fight instead of restarting it. */
+  captureSnapshot(): BattleSnapshot {
+    const units = this.units.map((u): BattleUnitSnap => {
+      const snap: BattleUnitSnap = {
+        id: u.id,
+        name: u.name,
+        classId: u.classId,
+        side: u.side,
+        x: Math.round(u.x),
+        y: Math.round(u.y),
+        hp: u.hp,
+        maxHp: u.maxHp,
+        atk: u.atk,
+        mag: u.mag,
+        def: u.def,
+        res: u.res,
+        mov: u.mov,
+        minRange: u.minRange,
+        maxRange: u.maxRange,
+        moved: u.moved,
+        acted: u.acted,
+        facing: u.facing,
+        alive: u.alive,
+        fade: u.fade,
+        level: u.level,
+        xp: u.xp,
+        bag: { ...u.bag },
+        spells: { ...u.spells },
+        weaponId: u.weaponId,
+        weaponEnh: u.weaponEnh,
+        shock: u.shock ? { ...u.shock } : null,
+        diseased: u.diseased,
+        diseaseBase: u.diseaseBase ? { ...u.diseaseBase } : null,
+        poisoned: u.poisoned,
+        stunned: u.stunned,
+        stunTurns: u.stunTurns,
+        crippled: u.crippled,
+        offHandId: u.offHandId,
+        gear: { ...u.gear },
+        summoned: u.summoned,
+        asleep: u.asleep,
+        sleepTurns: u.sleepTurns,
+        guaranteedDrop: u.guaranteedDrop,
+        moveBudgetUsed: u.moveBudgetUsed,
+      };
+      return snap;
+    });
+    // An in-flight action would otherwise replay (or vanish) on load. Spend the acting
+    // unit's action so they don't act twice; enemies also finish the turn.
+    if (this.active || this.queue.length > 0) {
+      const active = this.activeTurnUnit();
+      const snap = active ? units.find((u) => u.id === active.id) : undefined;
+      if (snap) {
+        snap.acted = true;
+        if (this.phase === "enemy" || snap.mov - snap.moveBudgetUsed <= 0) {
+          snap.moved = true;
+        }
+      }
+    }
+    return {
+      missionId: this.mission.id,
+      turn: this.turn,
+      phase: this.phase,
+      units,
+      tiles: [...this.tiles],
+      decorations: this.decorations.map((d) => ({ ...d })),
+      turnOrder: [...this.turnOrder],
+      activeUnitId: this.activeTurnUnit()?.id ?? this.activeUnitId,
+      selectedId: this.selectedId,
+      lootEmber: this.lootEmber,
+      lootWeapons: [...this.lootWeapons],
+      lootEquipment: [...this.lootEquipment],
+      ownedWeapons: [...this.ownedWeapons],
+      webZones: this.webZones.map((z) => ({ cells: [...z.cells], roundsLeft: z.roundsLeft })),
+      auraZones: this.auraZones.map((z) => ({
+        cells: [...z.cells],
+        roundsLeft: z.roundsLeft,
+        kind: z.kind,
+        side: z.side,
+        pct: z.pct,
+      })),
+      log: [...this.log],
+      winAvailable: this.winAvailable,
+      chestLoot: this.chestLoot
+        ? { unitName: this.chestLoot.unitName, ember: this.chestLoot.ember, items: this.chestLoot.items.map((i) => ({ ...i })) }
+        : null,
+      turnRestrained: this.turnRestrained,
+      turnBegan: !!this.activeTurnUnit() && this.activeUnitId === this.activeTurnUnit()?.id,
+    };
+  }
+
+  /** Overlay a saved fight onto this engine (which has already constructed the mission). */
+  applySnapshot(snap: BattleSnapshot): void {
+    if (snap.missionId !== this.mission.id) return;
+    if (snap.tiles.length === this.tiles.length) {
+      for (let i = 0; i < snap.tiles.length; i++) this.tiles[i] = snap.tiles[i]!;
+    }
+    this.decorations.splice(0, this.decorations.length, ...snap.decorations.map((d) => ({ ...d })));
+    this.units = snap.units.map(unitFromSnap);
+    this.turn = snap.turn;
+    this.phase = snap.phase;
+    this.turnOrder = [...snap.turnOrder];
+    this.lootEmber = snap.lootEmber;
+    this.lootWeapons = [...snap.lootWeapons];
+    this.lootEquipment = [...snap.lootEquipment];
+    this.ownedWeapons = new Set(snap.ownedWeapons);
+    this.webZones = snap.webZones.map((z) => ({ cells: new Set(z.cells), roundsLeft: z.roundsLeft }));
+    this.auraZones = snap.auraZones.map((z) => ({
+      cells: new Set(z.cells),
+      roundsLeft: z.roundsLeft,
+      kind: z.kind,
+      side: z.side,
+      pct: z.pct,
+    }));
+    this.log = [...snap.log];
+    this.winAvailable = snap.winAvailable;
+    this.chestLoot = snap.chestLoot
+      ? { unitName: snap.chestLoot.unitName, ember: snap.chestLoot.ember, items: snap.chestLoot.items.map((i) => ({ ...i })) }
+      : null;
+    this.turnRestrained = snap.turnRestrained;
+    this.result = null;
+    this.queue.length = 0;
+    this.active = null;
+    this.mode = "locked";
+    this.selectedId = null;
+    this.pendingFoeId = null;
+    this.inspectedId = null;
+    this.spellKind = null;
+    this.spellArmed = false;
+    this.spellAim = null;
+    this.potionAim = null;
+    this.missileTargets = [];
+    this.hover = null;
+    this.reach.clear();
+    this.attackFrom.clear();
+    this.threat = [];
+    this.orig = null;
+    this.origMoveBudgetUsed = null;
+    this.turnStart = null;
+    this.moveSpoiled = true;
+    this.skipStartOfTurn = snap.turnBegan;
+    this.activeUnitId = null;
+    const first = this.units.find((u) => u.side === "player" && u.alive);
+    if (first) {
+      this.cursor = { x: first.x, y: first.y };
+      this.centerOn(first.x, first.y);
+    }
+    this.tip = "Combate retomado.";
   }
 
   tick(dt: number): void {
@@ -1128,7 +1358,9 @@ export class BattleEngine {
         centerMul: step.centerMul ?? step.spellMul ?? 1,
       };
       {
-        const look = step.ids[0] ? this.units.find((u) => u.id === step.ids[0]) : null;
+        const look = step.ids[0]
+          ? this.units.find((u) => u.id === step.ids[0])
+          : null;
         const tx = look?.x ?? step.tiles[0]?.x;
         if (tx != null) this.faceSpriteToward(step.att, tx);
       }
@@ -2490,7 +2722,7 @@ export class BattleEngine {
     this.spellArmed = false;
     this.spellAim = null;
     this.hover = null;
-    this.tip = `Relâmpago: alcance ${LIGHTNING.range}, ${lightningFormula(u.mag)} − RES. No turno seguinte ${diceFormula(LIGHTNING.echoDice, LIGHTNING.echoFaces, LIGHTNING.echoBonus)} − RES. Toque no inimigo.`;
+    this.tip = `Relâmpago: alcance ${LIGHTNING.range}, ${lightningFormula(u.mag)} − RES. Atravessa cobertura e barricadas. No turno seguinte ${diceFormula(LIGHTNING.echoDice, LIGHTNING.echoFaces, LIGHTNING.echoBonus)} − RES. Toque no inimigo.`;
     sfxPlay.ui();
   }
 
@@ -2905,7 +3137,7 @@ export class BattleEngine {
     if (this.spellKind === "lightning") {
       const here = occupancy(this.units).get(key(cell.x, cell.y));
       if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > LIGHTNING.range) return false;
-      return clearShot(caster, cell, this.tiles, this.cols, "bolt");
+      return true;
     }
     if (this.spellKind === "magicMissile") {
       const here = occupancy(this.units).get(key(cell.x, cell.y));
@@ -3923,8 +4155,20 @@ export class BattleEngine {
       const gain = (better ? CHEST_LOOT.betterEmberBase : CHEST_LOOT.emberBase) + Math.floor(this.rng() * (better ? CHEST_LOOT.betterEmberDice : CHEST_LOOT.emberDice));
       this.lootEmber += gain;
       const potionKind = weightedPotionPick(this.rng);
-      if (this.givePotion(u, potionKind)) {
-        found.push({ name: POTIONS[potionKind].name, icon: `/game/icons/potion-${potionKind}.png?v=ds2`, tip: potionTooltip(potionKind) });
+      const who = this.givePotion(u, potionKind);
+      if (who) {
+        const passed = who.id !== u.id ? ` → ${who.name}` : "";
+        found.push({
+          name: `${POTIONS[potionKind].name}${passed}`,
+          icon: `/game/icons/potion-${potionKind}.png?v=ds2`,
+          tip: potionTooltip(potionKind),
+        });
+      } else {
+        found.push({
+          name: `${POTIONS[potionKind].name} (sem espaço — descartada)`,
+          icon: `/game/icons/potion-${potionKind}.png?v=ds2`,
+          tip: potionTooltip(potionKind),
+        });
       }
       if (this.rng() < (better ? CHEST_LOOT.betterGearChance : CHEST_LOOT.gearChance)) {
         const drop = weightedLootPick(this.rng, missionGearLevel(this.mission.index), this.ownedWeapons);
@@ -3972,56 +4216,63 @@ export class BattleEngine {
     // takesTurns keeps neutrals out of the turn order, so whoever reaches here is on one of
     // the two sides that actually take turns.
     this.phase = u.side === "player" ? "player" : "enemy";
-    u.moveBudgetUsed = 0;
-    this.startOfTurnEffects(u);
-    if (!u.alive) {
-      this.activeUnitId = null; // force re-detection next tick, skipping the unit that just died
+    const resumed = this.skipStartOfTurn;
+    this.skipStartOfTurn = false;
+    if (!resumed) {
+      u.moveBudgetUsed = 0;
+      this.startOfTurnEffects(u);
+      if (!u.alive) {
+        this.activeUnitId = null; // force re-detection next tick, skipping the unit that just died
+        return;
+      }
+      if (u.stunned) {
+        u.stunTurns = Math.max(0, u.stunTurns - 1);
+        u.stunned = u.stunTurns > 0;
+        u.moved = true;
+        u.acted = true;
+        this.tip = `${u.name} está atordoado(a) — perde o turno.`;
+        this.activeUnitId = null; // force re-detection next tick, moving on to whoever's next
+        return;
+      }
+      // Still standing in an active web patch at the start of your own turn means another
+      // sleepChance roll every turn you stay put, not just the one at cast — and a success
+      // stacks another 1D4 onto whatever sleepTurns you're already carrying (even mid-nap)
+      // rather than replacing it, so lingering in the web keeps digging the hole deeper.
+      if (this.isWebCell(u.x, u.y) && this.rng() < WEB_OF_DREAMS.sleepChance) {
+        const wasAsleep = u.asleep;
+        const extra = rollDice(WEB_OF_DREAMS.sleepDice, WEB_OF_DREAMS.sleepFaces, 0, this.rng);
+        u.asleep = true;
+        u.sleepTurns += extra;
+        this.pushLog(wasAsleep ? `${u.name} afunda mais fundo na teia (+${extra} turnos).` : `${u.name} adormece na teia.`);
+      }
+      if (u.asleep) {
+        u.sleepTurns = Math.max(0, u.sleepTurns - 1);
+        u.asleep = u.sleepTurns > 0;
+        u.moved = true;
+        u.acted = true;
+        this.tip = `${u.name} está adormecido(a) — perde o turno.`;
+        this.activeUnitId = null; // force re-detection next tick, moving on to whoever's next
+        return;
+      }
+      // Decided once, off the unit's position right now (the start of its turn) — every
+      // reach computation for the rest of this turn (repositioning included) uses this same
+      // verdict instead of re-checking, see effectiveUnitForReach.
+      this.turnRestrained = this.isWebCell(u.x, u.y);
+    } else if (!u.alive) {
+      this.activeUnitId = null;
       return;
     }
-    if (u.stunned) {
-      u.stunTurns = Math.max(0, u.stunTurns - 1);
-      u.stunned = u.stunTurns > 0;
-      u.moved = true;
-      u.acted = true;
-      this.tip = `${u.name} está atordoado(a) — perde o turno.`;
-      this.activeUnitId = null; // force re-detection next tick, moving on to whoever's next
-      return;
-    }
-    // Still standing in an active web patch at the start of your own turn means another
-    // sleepChance roll every turn you stay put, not just the one at cast — and a success
-    // stacks another 1D4 onto whatever sleepTurns you're already carrying (even mid-nap)
-    // rather than replacing it, so lingering in the web keeps digging the hole deeper.
-    if (this.isWebCell(u.x, u.y) && this.rng() < WEB_OF_DREAMS.sleepChance) {
-      const wasAsleep = u.asleep;
-      const extra = rollDice(WEB_OF_DREAMS.sleepDice, WEB_OF_DREAMS.sleepFaces, 0, this.rng);
-      u.asleep = true;
-      u.sleepTurns += extra;
-      this.pushLog(wasAsleep ? `${u.name} afunda mais fundo na teia (+${extra} turnos).` : `${u.name} adormece na teia.`);
-    }
-    if (u.asleep) {
-      u.sleepTurns = Math.max(0, u.sleepTurns - 1);
-      u.asleep = u.sleepTurns > 0;
-      u.moved = true;
-      u.acted = true;
-      this.tip = `${u.name} está adormecido(a) — perde o turno.`;
-      this.activeUnitId = null; // force re-detection next tick, moving on to whoever's next
-      return;
-    }
-    // Decided once, off the unit's position right now (the start of its turn) — every
-    // reach computation for the rest of this turn (repositioning included) uses this same
-    // verdict instead of re-checking, see effectiveUnitForReach.
-    this.turnRestrained = this.isWebCell(u.x, u.y);
     if (u.side === "player") {
-      u.acted = false;
+      if (!resumed) u.acted = false;
       this.selectedId = u.id;
       this.pendingFoeId = null;
       this.inspectedId = null;
       this.orig = { x: u.x, y: u.y };
-    this.origMoveBudgetUsed = u.moveBudgetUsed;
+      this.origMoveBudgetUsed = u.moveBudgetUsed;
       this.turnStart = { x: u.x, y: u.y };
-      this.moveSpoiled = false;
+      this.moveSpoiled = resumed;
       this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
-      this.attackFrom = attackableEnemies(u, this.reach, this.units, this.tiles, this.cols);
+      this.attackFrom = u.acted ? new Map() : attackableEnemies(u, this.reach, this.units, this.tiles, this.cols);
       this.threat = [];
       this.mode = "selected";
       this.tip = null;
@@ -4075,8 +4326,9 @@ export class BattleEngine {
 
     // Cultist ("Feiticeiro") is the one enemy mage — see cultistSpellUses. Lightning outranks
     // Magic Missile whenever both are still banked, and it prefers spending a charge over its
-    // plain ranged attack whenever a target is actually in range and line of sight; if not,
-    // it falls through to the same move-and-attack (or chase) logic as any other enemy.
+    // plain ranged attack whenever a target is actually in range (Lightning ignores cover;
+    // Magic Missile still needs line of sight); if not, it falls through to the same
+    // move-and-attack (or chase) logic as any other enemy.
     if (next.classId === "cultist" && (next.spells.tier1 > 0 || next.spells.tier2 > 0)) {
       const spellKind: "lightning" | "magicMissile" = next.spells.tier2 > 0 ? "lightning" : "magicMissile";
       const range = spellKind === "lightning" ? LIGHTNING.range : MAGIC_MISSILE.range;
@@ -4084,7 +4336,7 @@ export class BattleEngine {
       for (const cell of reach.values()) {
         for (const foe of players) {
           if (manhattan(cell, foe) > range) continue;
-          if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
+          if (spellKind !== "lightning" && !clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
           const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
           if (!bestSpell || score > bestSpell.score) bestSpell = { foe, from: { x: cell.x, y: cell.y }, score };
         }
@@ -4141,7 +4393,6 @@ export class BattleEngine {
         for (const cell of reach.values()) {
           for (const foe of players) {
             if (manhattan(cell, foe) > LIGHTNING.range) continue;
-            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
             const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
             if (!bestBolt || score > bestBolt.score) bestBolt = { foe, from: { x: cell.x, y: cell.y }, score };
           }

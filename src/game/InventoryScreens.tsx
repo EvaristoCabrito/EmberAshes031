@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
-import { CLASSES, EMPTY_BAG, EQUIPMENT, EQUIPMENT_SLOTS, WEAPONS, equipmentFitsSlot, equipmentIcon, equipmentStatSummary, equipmentTooltip, equipmentTypeSlotName, heroRecruited, lockpickTooltip, offHandBlocked, potionLabel, potionTooltip, weaponDiceLabel, weaponIcon, weaponPower, weaponRangeLabel, weaponTooltip, weaponsForClass } from "./data";
+import { BAG_MAX, CLASSES, EMPTY_BAG, EQUIPMENT, EQUIPMENT_SLOTS, POTION_CARRY_MAX, WEAPONS, equipmentFitsSlot, equipmentIcon, equipmentStatSummary, equipmentTooltip, equipmentTypeSlotName, heroRecruited, lockpickTooltip, offHandBlocked, potionLabel, potionTooltip, weaponDiceLabel, weaponIcon, weaponPower, weaponRangeLabel, weaponTooltip, weaponsForClass } from "./data";
 import type { ClassId, EquipSlot, PotionId, SaveData } from "./types";
 
 const POTIONS: PotionId[] = ["weak", "mid", "potent", "disease", "manaSmall", "manaMid", "manaLarge"];
@@ -406,7 +406,9 @@ export function BackpackScreen({
                   {potionLabel(kind)}
                   <span className="block text-[10px] uppercase tracking-wide text-muted">Consumível</span>
                 </p>
-                <p className="text-sm tabular-nums text-muted">×{bag[kind] ?? 0}</p>
+                <p className="text-sm tabular-nums text-muted">
+                  {bag[kind] ?? 0} / {POTION_CARRY_MAX[kind]}
+                </p>
               </div>
             </ItemTip>
           ))}
@@ -417,7 +419,7 @@ export function BackpackScreen({
                 Gazua
                 <span className="block text-[10px] uppercase tracking-wide text-muted">Consumível</span>
               </p>
-              <p className="text-sm tabular-nums text-muted">×{bag.lockpick ?? 0}</p>
+              <p className="text-sm tabular-nums text-muted">{bag.lockpick ?? 0} / {BAG_MAX}</p>
             </div>
           </ItemTip>
         </div>

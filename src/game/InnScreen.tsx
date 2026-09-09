@@ -242,7 +242,7 @@ export function InnScreen({
                       <span className="flex-1 text-sm min-w-0">
                         {potionLabel(kind)}
                         <span className="block text-[11px] text-muted tabular-nums">
-                          saco ×{have} · {price} Ember
+                          comprar {qty} · tem {have} / {POTION_CARRY_MAX[kind]} · {price} Ember
                         </span>
                       </span>
                       <button type="button" className="size-8 grid place-items-center rounded-md border border-border" onClick={() => add(kind, -1)} disabled={qty <= 0}>
@@ -267,7 +267,7 @@ export function InnScreen({
                   <span className="flex-1 text-sm min-w-0">
                     Gazua
                     <span className="block text-[11px] text-muted tabular-nums">
-                      saco ×{bag.lockpick ?? 0} · {LOCKPICK_PRICE} Ember
+                      comprar {lockpickQty} · tem {bag.lockpick ?? 0} / {BAG_MAX} · {LOCKPICK_PRICE} Ember
                     </span>
                   </span>
                   <button type="button" className="size-8 grid place-items-center rounded-md border border-border" onClick={() => addLockpick(-1)} disabled={lockpickQty <= 0}>
