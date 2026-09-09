@@ -111,7 +111,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 // big horrors, and the two creatures cut from reference video (familiar, ancient golem).
 // loadGameArt rejects on any missing file, so this set and what is on disk have to move
 // together.
-const HERO_IDLE = new Set<SpriteId>(["kael", "nira", "voss", "salazar", "horror", "Asherah", "familiar", "ancient-golem"]);
+const HERO_IDLE = new Set<SpriteId>(["kael", "nira", "voss", "salazar", "malrec", "aldric", "horror", "Asherah", "familiar", "ancient-golem"]);
 
 export async function loadGameArt(): Promise<GameArt> {
   const tiles = {} as Record<TerrainId, HTMLImageElement[]>;
@@ -132,7 +132,7 @@ export async function loadGameArt(): Promise<GameArt> {
   await Promise.all(
     SPRITES.map(async (id) => {
       const n = HERO_IDLE.has(id) ? 12 : 4;
-      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : "";
+      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" ? "?v=sheet" : "";
       sprites[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(`/game/sprites/${id}/${i + 1}.png${cacheBust}`)));
     }),
   );
@@ -144,8 +144,8 @@ export async function loadGameArt(): Promise<GameArt> {
     nira: { n: 4, bust: "" },
     voss: { n: 4, bust: "" },
     salazar: { n: 4, bust: "" },
-    malrec: { n: 4, bust: "" },
-    aldric: { n: 4, bust: "" },
+    malrec: { n: 5, bust: "?v=sheet" },
+    aldric: { n: 5, bust: "?v=sheet" },
     familiar: { n: 8, bust: "?v=6" },
     "ancient-golem": { n: 8, bust: "" },
     "morvenian-wolf": { n: 6, bust: "" },
@@ -176,12 +176,26 @@ export async function loadGameArt(): Promise<GameArt> {
   const WALK_FRAMES: Partial<Record<SpriteId, { n: number; bust: string }>> = {
     familiar: { n: 8, bust: "?v=6" },
     "ancient-golem": { n: 8, bust: "" },
+    malrec: { n: 6, bust: "?v=sheet" },
+    aldric: { n: 6, bust: "?v=sheet" },
   };
   const walks: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
   await Promise.all(
     (Object.keys(WALK_FRAMES) as SpriteId[]).map(async (id) => {
       const { n, bust } = WALK_FRAMES[id]!;
       walks[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(`/game/sprites/${id}/move-${i + 1}.png${bust}`)));
+    }),
+  );
+  const walksLeft: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
+  const attacksLeft: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
+  const DIR_LEFT: SpriteId[] = ["malrec", "aldric"];
+  await Promise.all(
+    DIR_LEFT.map(async (id) => {
+      const walkN = WALK_FRAMES[id]?.n ?? 6;
+      const atkN = ATTACK_FRAMES[id]?.n ?? 5;
+      const bust = "?v=sheet";
+      walksLeft[id] = await Promise.all(Array.from({ length: walkN }, (_, i) => loadImage(`/game/sprites/${id}/move-left-${i + 1}.png${bust}`)));
+      attacksLeft[id] = await Promise.all(Array.from({ length: atkN }, (_, i) => loadImage(`/game/sprites/${id}/atk-left-${i + 1}.png${bust}`)));
     }),
   );
   const impact = await Promise.all([1, 2, 3, 4].map((n) => loadImage(`/game/fx/impact-${n}.png`)));
@@ -213,5 +227,5 @@ export async function loadGameArt(): Promise<GameArt> {
       side: await loadImage("/game/sprites/butcher/front.png"),
     },
   };
-  return { tiles, decorations, sprites, attacks, casts, walks, idles, walkDirs, impact, fireballCore, causticVenomCore, arrowCore, backdrops };
+  return { tiles, decorations, sprites, attacks, attacksLeft, casts, walks, walksLeft, idles, walkDirs, impact, fireballCore, causticVenomCore, arrowCore, backdrops };
 }

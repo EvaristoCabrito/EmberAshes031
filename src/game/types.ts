@@ -563,6 +563,11 @@ export interface GameArt {
    * moving; a sprite without one keeps falling back to its idle loop run faster, which is
    * what every sprite did before walk cycles existed. */
   walks: Partial<Record<SpriteId, HTMLImageElement[]>>;
+  /** Optional left-facing walk/attack cuts. A sprite with these skips the scale-flip while
+   * moving or striking and plays this set when facing === -1 (the right-facing set lives in
+   * `walks` / `attacks`). Idle still uses the shared 12-frame sheet and the regular flip. */
+  walksLeft: Partial<Record<SpriteId, HTMLImageElement[]>>;
+  attacksLeft: Partial<Record<SpriteId, HTMLImageElement[]>>;
   idles: Partial<Record<SpriteId, HTMLImageElement[]>>;
   walkDirs: Partial<Record<SpriteId, WalkDirs>>;
   impact: HTMLImageElement[];

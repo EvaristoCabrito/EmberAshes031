@@ -1065,6 +1065,16 @@ export class BattleEngine {
     this.emit();
   }
 
+  /** Point a directional sprite (conjurer / lancer) at a column so walk and attack
+   * play the matching left/right cut instead of a mirrored idle. Other sprites keep
+   * the historical "facing = 1 shows the sheet as drawn" convention. */
+  private faceSpriteToward(id: string, x: number): void {
+    const u = this.units.find((n) => n.id === id);
+    if (!u || (u.sprite !== "malrec" && u.sprite !== "aldric")) return;
+    if (x > u.x) u.facing = 1;
+    else if (x < u.x) u.facing = -1;
+  }
+
   private startSeq(step: Seq): void {
     if (step.type === "move") {
       this.active = { type: "move", id: step.id, path: step.path, i: 0, t: 0 };
@@ -1072,6 +1082,8 @@ export class BattleEngine {
     } else if (step.type === "combat") {
       const target = this.units.find((u) => u.id === step.def);
       if (!target || !target.alive) return;
+      this.faceSpriteToward(step.att, target.x);
+      this.faceSpriteToward(step.def, this.units.find((u) => u.id === step.att)?.x ?? target.x);
       this.active = {
         type: "combat",
         att: step.att,
@@ -1115,6 +1127,11 @@ export class BattleEngine {
         spellMul: step.spellMul ?? 1,
         centerMul: step.centerMul ?? step.spellMul ?? 1,
       };
+      {
+        const look = step.ids[0] ? this.units.find((u) => u.id === step.ids[0]) : null;
+        const tx = look?.x ?? step.tiles[0]?.x;
+        if (tx != null) this.faceSpriteToward(step.att, tx);
+      }
       this.banner = step.label ?? "";
       sfxPlay.crit();
       if (step.spellKind === "magicMissile") {
@@ -1147,6 +1164,8 @@ export class BattleEngine {
       this.active = { type: "heal", att: step.att, def: step.def, kind: step.kind, t: 0, applied: false };
       this.banner = CURES[step.kind].name;
       sfxPlay.ui();
+      const healed = this.units.find((u) => u.id === step.def);
+      if (healed) this.faceSpriteToward(step.att, healed.x);
     } else if (step.type === "cureDisease") {
       this.active = { type: "cureDisease", att: step.att, def: step.def, t: 0, applied: false };
       this.banner = CURE_DISEASE.name;
@@ -5042,7 +5061,7 @@ export class BattleEngine {
       };
     }
     const heavy = u.size >= 4 ? 1.4 : u.size === 2 ? 1.12 : 1;
-    if (u.sprite === "kael" || u.size >= 4) {
+    if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.size >= 4) {
       return { bob: 0, sway: 0, breath: 0 };
     }
     const bob = Math.sin(t * 1.55) * (1.15 * heavy);
@@ -5440,12 +5459,15 @@ export class BattleEngine {
       const idle = !atk && !moving ? this.art.idles[u.sprite] : undefined;
       // While moving, a sprite that has a walk cut plays it; one that doesn't falls back to
       // its idle loop, which idleFrame already runs faster for a moving unit.
-      const walk = atk == null && moving ? this.art.walks[u.sprite] : undefined;
+      const faceRight = u.facing === 1;
+      const walkPool = faceRight ? this.art.walks[u.sprite] : (this.art.walksLeft[u.sprite] ?? this.art.walks[u.sprite]);
+      const atkPool = faceRight ? this.art.attacks[u.sprite] : (this.art.attacksLeft[u.sprite] ?? this.art.attacks[u.sprite]);
+      const walk = atk == null && moving ? walkPool : undefined;
       // attackPose computes its index against whichever pool it picked (casts for a spell/heal
       // cast, when the caster has one — attacks otherwise), so this has to mirror that same
       // choice or the index lands in the wrong array.
       const casting = this.active && (this.active.type === "spell" || this.active.type === "heal") && this.active.att === u.id;
-      const frames = atk != null ? (casting ? (this.art.casts[u.sprite] ?? this.art.attacks[u.sprite]) : this.art.attacks[u.sprite]) : walk ?? idle ?? this.art.sprites[u.sprite];
+      const frames = atk != null ? (casting ? (this.art.casts[u.sprite] ?? atkPool) : atkPool) : walk ?? idle ?? this.art.sprites[u.sprite];
       const n = frames?.length ?? 0;
       const fi = atk != null ? atk : walk ? this.walkFrame(u, n) : this.idleFrame(u, n || 4);
       const walkDirs = moving ? this.art.walkDirs[u.sprite] : undefined;
@@ -5464,8 +5486,12 @@ export class BattleEngine {
       // for normal-size sprites, so the feet don't float above the tile they stand on.
       const footY = s >= 4 ? tile * 0.9 : cell * 0.42;
       ctx.translate(px + sway, py + footY + bob);
-      if (u.sprite === "kael") ctx.scale(u.facing, 1);
-      else ctx.scale(u.facing * (1 - breath * 0.22), 1 + breath);
+      // Dedicated left/right walk+attack cuts (conjurer, lancer) already face the way we want,
+      // so flipping them would mirror the staff/spear onto the wrong side. Idle still flips.
+      const dirAction = (u.sprite === "malrec" || u.sprite === "aldric") && (atk != null || moving);
+      const flip = dirAction ? 1 : u.facing;
+      if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric") ctx.scale(flip, 1);
+      else ctx.scale(flip * (1 - breath * 0.22), 1 + breath);
       if (u.levelGlow > 0) {
         const pulse = 0.75 + Math.sin(this.time * 7) * 0.25;
         const bg = ctx.createRadialGradient(0, -h * 0.5, 0, 0, -h * 0.5, w * 1.15);
