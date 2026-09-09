@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { ChevronLeft, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { BAG_MAX, CLASSES, HERO_NAMES, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, WEAPON_MAX_ENH, WEAPONS, heroRecruited, partyPouchId, pouchIcon, weaponDiceLabel, weaponEnhCost, weaponIcon, weaponPower, weaponRangeLabel, weaponSellValue, weaponsForClass, potionLabel } from "./data";
-import { PartyInventoryOverlay } from "./InventoryScreens";
+import { BAG_MAX, CLASSES, HERO_NAMES, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, WEAPON_MAX_ENH, WEAPONS, heroRecruited, lockpickTooltip, partyPouchId, potionTooltip, pouchIcon, weaponDiceLabel, weaponEnhCost, weaponIcon, weaponPower, weaponRangeLabel, weaponSellValue, weaponTooltip, weaponsForClass, potionLabel } from "./data";
+import { ItemTip, PartyInventoryOverlay } from "./InventoryScreens";
 import type { Bag, ClassId, EquipSlot, PotionId, SaveData } from "./types";
 
 const BAG_ICON = pouchIcon(null);
@@ -77,7 +77,7 @@ export function InnScreen({
   onPay: (hero: string, cart: Record<PotionId, number>, lockpicks: number) => boolean;
   onBuyWeapon: (hero: string, weaponId: string) => boolean;
   onEquipWeapon: (hero: string, weaponId: string) => void;
-  onEquipItem?: (hero: string, slot: EquipSlot, itemId: string) => void;
+  onEquipItem?: (hero: string, slot: EquipSlot, itemId: string | null) => void;
   onUpgradeWeapon: (weaponId: string) => boolean;
   onSellWeapon: (weaponId: string) => number | false;
 }) {
@@ -236,50 +236,54 @@ export function InnScreen({
                 const have = bag[kind] ?? 0;
                 const qty = cart[kind] ?? 0;
                 return (
-                  <div key={kind} className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
-                    <img src={ICONS[kind]} alt="" className="size-6 rounded-sm object-cover" />
-                    <span className="flex-1 text-sm min-w-0">
-                      {potionLabel(kind)}
-                      <span className="block text-[11px] text-muted tabular-nums">
-                        saco ×{have} · {price} Ember
+                  <ItemTip key={kind} text={potionTooltip(kind)} className="block">
+                    <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
+                      <img src={ICONS[kind]} alt="" className="size-6 rounded-sm object-cover" />
+                      <span className="flex-1 text-sm min-w-0">
+                        {potionLabel(kind)}
+                        <span className="block text-[11px] text-muted tabular-nums">
+                          saco ×{have} · {price} Ember
+                        </span>
                       </span>
-                    </span>
-                    <button type="button" className="size-8 grid place-items-center rounded-md border border-border" onClick={() => add(kind, -1)} disabled={qty <= 0}>
-                      −
-                    </button>
-                    <span className="w-6 text-center text-sm tabular-nums">{qty}</span>
-                    <button
-                      type="button"
-                      className="size-8 grid place-items-center rounded-md border border-border"
-                      onClick={() => add(kind, 1)}
-                      disabled={have + qty >= POTION_CARRY_MAX[kind]}
-                    >
-                      +
-                    </button>
-                  </div>
+                      <button type="button" className="size-8 grid place-items-center rounded-md border border-border" onClick={() => add(kind, -1)} disabled={qty <= 0}>
+                        −
+                      </button>
+                      <span className="w-6 text-center text-sm tabular-nums">{qty}</span>
+                      <button
+                        type="button"
+                        className="size-8 grid place-items-center rounded-md border border-border"
+                        onClick={() => add(kind, 1)}
+                        disabled={have + qty >= POTION_CARRY_MAX[kind]}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </ItemTip>
                 );
               })}
-              <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
-                <img src="/game/icons/lockpick.png" alt="" className="size-6 rounded-sm object-cover" />
-                <span className="flex-1 text-sm min-w-0">
-                  Gazua
-                  <span className="block text-[11px] text-muted tabular-nums">
-                    saco ×{bag.lockpick ?? 0} · {LOCKPICK_PRICE} Ember
+              <ItemTip text={lockpickTooltip()} className="block">
+                <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
+                  <img src="/game/icons/lockpick.png" alt="" className="size-6 rounded-sm object-cover" />
+                  <span className="flex-1 text-sm min-w-0">
+                    Gazua
+                    <span className="block text-[11px] text-muted tabular-nums">
+                      saco ×{bag.lockpick ?? 0} · {LOCKPICK_PRICE} Ember
+                    </span>
                   </span>
-                </span>
-                <button type="button" className="size-8 grid place-items-center rounded-md border border-border" onClick={() => addLockpick(-1)} disabled={lockpickQty <= 0}>
-                  −
-                </button>
-                <span className="w-6 text-center text-sm tabular-nums">{lockpickQty}</span>
-                <button
-                  type="button"
-                  className="size-8 grid place-items-center rounded-md border border-border"
-                  onClick={() => addLockpick(1)}
-                  disabled={(bag.lockpick ?? 0) + lockpickQty >= BAG_MAX}
-                >
-                  +
-                </button>
-              </div>
+                  <button type="button" className="size-8 grid place-items-center rounded-md border border-border" onClick={() => addLockpick(-1)} disabled={lockpickQty <= 0}>
+                    −
+                  </button>
+                  <span className="w-6 text-center text-sm tabular-nums">{lockpickQty}</span>
+                  <button
+                    type="button"
+                    className="size-8 grid place-items-center rounded-md border border-border"
+                    onClick={() => addLockpick(1)}
+                    disabled={(bag.lockpick ?? 0) + lockpickQty >= BAG_MAX}
+                  >
+                    +
+                  </button>
+                </div>
+              </ItemTip>
             </div>
             <p className={`text-sm tabular-nums ${remain < 0 ? "text-danger" : "text-muted"}`}>
               Conta {total} Ember · restam {remain}
@@ -340,7 +344,7 @@ function SmithPanel({
   onBack: () => void;
   onBuyWeapon: (hero: string, weaponId: string) => boolean;
   onEquipWeapon: (hero: string, weaponId: string) => void;
-  onEquipItem?: (hero: string, slot: EquipSlot, itemId: string) => void;
+  onEquipItem?: (hero: string, slot: EquipSlot, itemId: string | null) => void;
   onUpgradeWeapon: (weaponId: string) => boolean;
   onSellWeapon: (weaponId: string) => number | false;
 }) {
@@ -441,23 +445,29 @@ function SmithPanel({
 
           <p className="text-xs uppercase tracking-[0.16em] text-muted mt-2">Equipada</p>
           {equippedWeapon ? (
-            <div className="flex items-center gap-2 rounded-md border border-accent px-2 py-1.5">
-              <img src={weaponIcon(equippedWeapon.id)} alt="" className="size-10 rounded-sm object-cover" />
-              <span className="flex-1 text-sm min-w-0">
-                {equippedWeapon.name} {equippedEnh > 0 ? `+${equippedEnh}` : ""}
-                <span className="block text-[11px] text-muted tabular-nums">
-                  {weaponDiceLabel(equippedWeapon.id)} {equippedEnh > 0 ? `+ ${equippedEnh} aprimoro` : ""} · {weaponRangeLabel(equippedWeapon.id)}
+            <ItemTip text={weaponTooltip(equippedWeapon, equippedEnh)} className="block">
+              <div className="flex items-center gap-2 rounded-md border border-accent px-2 py-1.5">
+                <img src={weaponIcon(equippedWeapon.id)} alt="" className="size-10 rounded-sm object-cover" />
+                <span className="flex-1 text-sm min-w-0">
+                  {equippedWeapon.name} {equippedEnh > 0 ? `+${equippedEnh}` : ""}
+                  <span className="block text-[11px] text-muted tabular-nums">
+                    {weaponDiceLabel(equippedWeapon.id)} {equippedEnh > 0 ? `+ ${equippedEnh} aprimoro` : ""} · {weaponRangeLabel(equippedWeapon.id)}
+                  </span>
+                  <span className="block text-[10px] uppercase tracking-wide text-muted">Mão principal</span>
                 </span>
-              </span>
-              <div className="flex flex-col gap-1">
-                <Button size="sm" disabled={nextEnhCost == null || ember < nextEnhCost} onClick={upgrade}>
-                  {nextEnhCost == null ? "Máx." : `+1 · ${nextEnhCost} Ember`}
-                </Button>
-                <Button size="sm" variant="quiet" onClick={() => sell(equippedWeapon.id)}>
-                  Vender · {weaponSellValue(equippedWeapon.id, equippedEnh)} Ember
-                </Button>
+                <div className="flex flex-col gap-1">
+                  <Button size="sm" disabled={nextEnhCost == null || ember < nextEnhCost} onClick={upgrade}>
+                    {nextEnhCost == null ? "Máx." : `+1 · ${nextEnhCost} Ember`}
+                  </Button>
+                  <Button size="sm" variant="quiet" onClick={() => onEquipWeapon(hero, "")}>
+                    Desequipar
+                  </Button>
+                  <Button size="sm" variant="quiet" onClick={() => sell(equippedWeapon.id)}>
+                    Vender · {weaponSellValue(equippedWeapon.id, equippedEnh)} Ember
+                  </Button>
+                </div>
               </div>
-            </div>
+            </ItemTip>
           ) : (
             <p className="text-sm text-muted">Nenhuma arma equipada ainda.</p>
           )}
@@ -467,29 +477,31 @@ function SmithPanel({
               <p className="text-xs uppercase tracking-[0.16em] text-muted mt-2">No saco</p>
               <div className="flex flex-col gap-1">
                 {owned.map((w) => (
-                  <div key={w.id} className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
-                    <img src={weaponIcon(w.id)} alt="" className="size-8 rounded-sm object-cover" />
-                    <span className="flex-1 text-sm min-w-0">
-                      {w.name}
-                      <span className="block text-[11px] text-muted tabular-nums">
-                        {weaponDiceLabel(w.id)} · {weaponRangeLabel(w.id)}
-                      </span>
-                      {w.bonusClass && (
-                        <span
-                          className={`block text-[11px] tabular-nums ${w.bonusClass === classId ? "text-accent" : "text-muted"}`}
-                          title={`+10% de dano para a classe ${CLASSES[w.bonusClass].name}`}
-                        >
-                          +10% dano · {CLASSES[w.bonusClass].name}
+                  <ItemTip key={w.id} text={weaponTooltip(w, weapons[w.id] ?? 0)} className="block">
+                    <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
+                      <img src={weaponIcon(w.id)} alt="" className="size-8 rounded-sm object-cover" />
+                      <span className="flex-1 text-sm min-w-0">
+                        {w.name}
+                        <span className="block text-[11px] text-muted tabular-nums">
+                          {weaponDiceLabel(w.id)} · {weaponRangeLabel(w.id)}
                         </span>
-                      )}
-                    </span>
-                    <Button size="sm" variant="quiet" onClick={() => equip(w.id)}>
-                      Equipar
-                    </Button>
-                    <Button size="sm" variant="quiet" onClick={() => sell(w.id)}>
-                      Vender · {weaponSellValue(w.id, weapons[w.id] ?? 0)} Ember
-                    </Button>
-                  </div>
+                        <span className="block text-[10px] uppercase tracking-wide text-muted">Mão principal</span>
+                        {w.bonusClass && (
+                          <span
+                            className={`block text-[11px] tabular-nums ${w.bonusClass === classId ? "text-accent" : "text-muted"}`}
+                          >
+                            +10% dano · {CLASSES[w.bonusClass].name}
+                          </span>
+                        )}
+                      </span>
+                      <Button size="sm" variant="quiet" onClick={() => equip(w.id)}>
+                        Equipar
+                      </Button>
+                      <Button size="sm" variant="quiet" onClick={() => sell(w.id)}>
+                        Vender · {weaponSellValue(w.id, weapons[w.id] ?? 0)} Ember
+                      </Button>
+                    </div>
+                  </ItemTip>
                 ))}
               </div>
             </>
@@ -500,26 +512,28 @@ function SmithPanel({
               <p className="text-xs uppercase tracking-[0.16em] text-muted mt-2">Na bancada</p>
               <div className="flex flex-col gap-1">
                 {notOwned.map((w) => (
-                  <div key={w.id} className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
-                    <img src={weaponIcon(w.id)} alt="" className="size-8 rounded-sm object-cover" />
-                    <span className="flex-1 text-sm min-w-0">
-                      {w.name}
-                      <span className="block text-[11px] text-muted tabular-nums">
-                        {weaponDiceLabel(w.id)} · {weaponRangeLabel(w.id)} · {w.price} Ember
-                      </span>
-                      {w.bonusClass && (
-                        <span
-                          className={`block text-[11px] tabular-nums ${w.bonusClass === classId ? "text-accent" : "text-muted"}`}
-                          title={`+10% de dano para a classe ${CLASSES[w.bonusClass].name}`}
-                        >
-                          +10% dano · {CLASSES[w.bonusClass].name}
+                  <ItemTip key={w.id} text={weaponTooltip(w)} className="block">
+                    <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
+                      <img src={weaponIcon(w.id)} alt="" className="size-8 rounded-sm object-cover" />
+                      <span className="flex-1 text-sm min-w-0">
+                        {w.name}
+                        <span className="block text-[11px] text-muted tabular-nums">
+                          {weaponDiceLabel(w.id)} · {weaponRangeLabel(w.id)} · {w.price} Ember
                         </span>
-                      )}
-                    </span>
-                    <Button size="sm" disabled={ember < w.price} onClick={() => buy(w.id)}>
-                      Comprar
-                    </Button>
-                  </div>
+                        <span className="block text-[10px] uppercase tracking-wide text-muted">Mão principal</span>
+                        {w.bonusClass && (
+                          <span
+                            className={`block text-[11px] tabular-nums ${w.bonusClass === classId ? "text-accent" : "text-muted"}`}
+                          >
+                            +10% dano · {CLASSES[w.bonusClass].name}
+                          </span>
+                        )}
+                      </span>
+                      <Button size="sm" disabled={ember < w.price} onClick={() => buy(w.id)}>
+                        Comprar
+                      </Button>
+                    </div>
+                  </ItemTip>
                 ))}
               </div>
             </>

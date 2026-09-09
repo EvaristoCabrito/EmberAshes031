@@ -5,8 +5,8 @@ import { loadGameArt, TILE_VARIANT_COUNT, tileVariantName, tileVariantSrc } from
 import { installAudioUnlock, playFile, playMenuMusic, playTheme, resumeAudio, setMuted, sfxPlay, stopMusic, unlockAudio } from "./audio";
 import { BattleCanvas } from "./BattleCanvas";
 import { InnScreen } from "./InnScreen";
-import { PartyInventoryOverlay } from "./InventoryScreens";
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, CURE_DISEASE, CURES, DECORATIONS, DOUBLE_STRIKE, doubleStrikeFormula, EQUIPMENT, EXP_TO_LEVEL, FIREBALL, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, MAGIC_MISSILE, PIERCING, piercingMul, PIERCING_THRUST, MAX_LEVEL, POTIONS, POTION_LOOT_WEIGHT, PROMOTE_LEVEL, PROMOTED_BASE, PROMOTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, TERRAIN, WEAPONS, WEAPON_MAX_ENH, WEB_OF_DREAMS, BAG_MAX, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, barricadeDecor, decorationCells, placedFootprint, decorationImage, diceFormula, emberForKill, enemyLevelFor, equippedPouchId, fireballFormula, healFormula, lightningFormula, dressMap, isSummonClass, MUSIC_TRACKS, SUMMON_CLASSES, parseLayout, potionLabel, pouchIcon, rangeLabel, sheetLine, spellFormula, spellTier, spellUseGains, startingBags, statsFor, terrainNote, tierKey, tierUses, weaponEnhCost, weaponSellValue, MULTI_SHOT, multiShotFormula, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, STAMPEDE, stampedeFormula, type SpellTier } from "./data";
+import { PartyInventoryOverlay, ItemTip } from "./InventoryScreens";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, CURE_DISEASE, CURES, DECORATIONS, DOUBLE_STRIKE, doubleStrikeFormula, EQUIPMENT, EXP_TO_LEVEL, FIREBALL, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, MAGIC_MISSILE, PIERCING, piercingMul, PIERCING_THRUST, MAX_LEVEL, POTIONS, POTION_LOOT_WEIGHT, PROMOTE_LEVEL, PROMOTED_BASE, PROMOTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, TERRAIN, WEAPONS, WEAPON_MAX_ENH, WEB_OF_DREAMS, BAG_MAX, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, barricadeDecor, decorationCells, placedFootprint, decorationImage, diceFormula, emberForKill, enemyLevelFor, equippedPouchId, fireballFormula, healFormula, lightningFormula, dressMap, isSummonClass, MUSIC_TRACKS, SUMMON_CLASSES, parseLayout, potionLabel, potionTooltip, lockpickTooltip, pouchIcon, rangeLabel, sheetLine, spellFormula, spellTier, spellUseGains, startingBags, statsFor, terrainNote, tierKey, tierUses, weaponEnhCost, weaponSellValue, equipmentFitsSlot, MULTI_SHOT, multiShotFormula, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, STAMPEDE, stampedeFormula, type SpellTier } from "./data";
 import { BattleEngine } from "./engine";
 import { MapPreviewCanvas, type PreviewUnitSelection } from "./MapPreviewCanvas";
 import { WorldMapScreen } from "./WorldMapScreen";
@@ -61,12 +61,19 @@ function equipSharedWeapon(save: SaveData, hero: string, weaponId: string): Save
 /** Equipment is a physical party pool: select a reserve piece or transfer one from another
  * hero. Consumable bags are intentionally not part of this function. */
 function equipSharedItem(save: SaveData, hero: string, slot: EquipSlot, itemId: string): SaveData | null {
-  const source = Object.entries(save.equipment)
-    .flatMap(([owner, slots]) => (Object.entries(slots) as [EquipSlot, string][]).map(([usedSlot, id]) => ({ owner, usedSlot, id })))
-    .find((entry) => entry.id === itemId && !(entry.owner === hero && entry.usedSlot === slot));
+  const item = EQUIPMENT[itemId];
+  if (!item || !equipmentFitsSlot(item, slot)) return null;
   const reserve = save.looseEquipment[itemId] ?? 0;
   const current = save.equipment[hero]?.[slot];
   if (current === itemId) return save;
+  // Prefer a spare in the stash so two copies of the same ring can fill both fingers.
+  // Only pull the piece off another slot when there is no reserve left.
+  const source =
+    reserve > 0
+      ? undefined
+      : Object.entries(save.equipment)
+          .flatMap(([owner, slots]) => (Object.entries(slots) as [EquipSlot, string][]).map(([usedSlot, id]) => ({ owner, usedSlot, id })))
+          .find((entry) => entry.id === itemId && !(entry.owner === hero && entry.usedSlot === slot));
   if (!source && reserve <= 0) return null;
 
   const equipment = Object.fromEntries(Object.entries(save.equipment).map(([owner, slots]) => [owner, { ...slots }])) as SaveData["equipment"];
@@ -77,6 +84,23 @@ function equipSharedItem(save: SaveData, hero: string, slot: EquipSlot, itemId: 
   if (current) looseEquipment[current] = (looseEquipment[current] ?? 0) + 1;
   equipment[hero] = { ...(equipment[hero] ?? {}), [slot]: itemId };
   return { ...save, equipment, looseEquipment };
+}
+
+function unequipSharedItem(save: SaveData, hero: string, slot: EquipSlot): SaveData {
+  const current = save.equipment[hero]?.[slot];
+  if (!current) return save;
+  const equipment = Object.fromEntries(Object.entries(save.equipment).map(([owner, slots]) => [owner, { ...slots }])) as SaveData["equipment"];
+  const looseEquipment = { ...save.looseEquipment };
+  delete equipment[hero]![slot];
+  looseEquipment[current] = (looseEquipment[current] ?? 0) + 1;
+  return { ...save, equipment, looseEquipment };
+}
+
+function unequipSharedWeapon(save: SaveData, hero: string): SaveData {
+  if (!save.equipped[hero]) return save;
+  const equipped = { ...save.equipped };
+  delete equipped[hero];
+  return { ...save, equipped };
 }
 function hudBlank(): HudSnapshot {
   return {
@@ -390,15 +414,8 @@ function slotLabel(action: SlotAction): string {
 }
 
 function slotTooltip(action: SlotAction): string {
-  const label = slotLabel(action);
-  if (action.kind === "potion") {
-    const def = POTIONS[action.potion];
-    if (def.effect === "mana") {
-      const restore = def.manaRestore ?? 0;
-      return `${label} · restaura ${restore} uso${restore === 1 ? "" : "s"} de cada magia que ainda tem carga disponível, sem passar do máximo de cada nível.`;
-    }
-  }
-  return label;
+  if (action.kind === "potion") return potionTooltip(action.potion);
+  return slotLabel(action);
 }
 
 function slotCount(action: SlotAction, unit: UnitPublic): number {
@@ -975,11 +992,19 @@ export function GameApp() {
           }}
           onEquipWeapon={(hero: string, weaponId: string) => {
             const rec = activeSave(bank);
+            if (!weaponId) {
+              persistCurrent({ ...unequipSharedWeapon(rec, hero), pendingMission: null });
+              return;
+            }
             const next = equipSharedWeapon(rec, hero, weaponId);
             if (next) persistCurrent({ ...next, pendingMission: null });
           }}
-          onEquipItem={(hero: string, slot: EquipSlot, itemId: string) => {
+          onEquipItem={(hero: string, slot: EquipSlot, itemId: string | null) => {
             const rec = activeSave(bank);
+            if (!itemId) {
+              persistCurrent({ ...unequipSharedItem(rec, hero, slot), pendingMission: null });
+              return;
+            }
             const next = equipSharedItem(rec, hero, slot, itemId);
             if (next) persistCurrent({ ...next, pendingMission: null });
           }}
@@ -1080,12 +1105,20 @@ export function GameApp() {
           // from the loot list, so recording ownership here is what keeps it.
           onEquipWeapon={(hero, weaponId, alsoOwn) => {
             const rec = activeSave(bank);
+            if (!weaponId) {
+              persistCurrent(unequipSharedWeapon(rec, hero));
+              return;
+            }
             const owned = alsoOwn && rec.weapons[weaponId] == null ? { ...rec, weapons: { ...rec.weapons, [weaponId]: 0 } } : rec;
             const next = equipSharedWeapon(owned, hero, weaponId);
             if (next) persistCurrent(next);
           }}
           onEquipItem={(hero, slot, itemId, alsoOwn) => {
             const rec = activeSave(bank);
+            if (!itemId) {
+              persistCurrent(unequipSharedItem(rec, hero, slot));
+              return;
+            }
             const owned = alsoOwn ? { ...rec, looseEquipment: { ...rec.looseEquipment, [itemId]: (rec.looseEquipment[itemId] ?? 0) + 1 } } : rec;
             const next = equipSharedItem(owned, hero, slot, itemId);
             if (next) persistCurrent(next);
@@ -4246,7 +4279,7 @@ function BattleScreen({
   /** Persist a mid-battle gear change. `alsoOwn` is true when the item came out of a chest
    * this battle and therefore is not in the save's owned lists yet. */
   onEquipWeapon?: (hero: string, weaponId: string, alsoOwn: boolean) => void;
-  onEquipItem?: (hero: string, slot: EquipSlot, itemId: string, alsoOwn: boolean) => void;
+  onEquipItem?: (hero: string, slot: EquipSlot, itemId: string | null, alsoOwn: boolean) => void;
   /** True while running a map from the editor, which exits back to it rather than quitting. */
   playtest?: boolean;
 }) {
@@ -4412,8 +4445,6 @@ function BattleScreen({
     if (!actor || hud.busy) return true;
     const count = slotCount(action, actor);
     if (count <= 0) return true;
-    // Potions are free item uses: available before or after the unit's action.
-    if (action.kind === "potion") return false;
     if (!showAct || actor.acted) return true;
     return false;
   }
@@ -4569,9 +4600,11 @@ function BattleScreen({
                   <span>Ember</span>
                 </li>
                 {hud.chestLoot.items.map((item, i) => (
-                  <li key={i} className="text-sm flex items-center gap-2">
-                    <img src={item.icon} alt="" className="size-8 rounded-sm object-cover bg-bg shrink-0" />
-                    <span>{item.name}</span>
+                  <li key={i}>
+                    <ItemTip text={item.tip ?? item.name} className="text-sm flex items-center gap-2">
+                      <img src={item.icon} alt="" className="size-8 rounded-sm object-cover bg-bg shrink-0" />
+                      <span>{item.name}</span>
+                    </ItemTip>
                   </li>
                 ))}
                 {hud.chestLoot.items.length === 0 && <li className="text-sm text-muted">Nada além do Ember.</li>}
@@ -4688,16 +4721,17 @@ function BattleScreen({
             </Button>
           )}
           {hud.canLockpick && (
-            <button
-              type="button"
-              disabled={!showAct || hud.busy}
-              onClick={() => engine.useLockpick()}
-              title="Custa 1 Gazua para abrir."
-              className="relative h-9 px-2 rounded-md border border-border bg-bg flex items-center gap-1 disabled:opacity-40"
-            >
-              <img src="/game/icons/lockpick.png" alt="" className="size-5 rounded-sm object-contain" />
-              <span className="text-sm tabular-nums">×{actor?.bag.lockpick ?? 0}</span>
-            </button>
+            <ItemTip text={lockpickTooltip()}>
+              <button
+                type="button"
+                disabled={!showAct || hud.busy}
+                onClick={() => engine.useLockpick()}
+                className="relative h-9 px-2 rounded-md border border-border bg-bg flex items-center gap-1 disabled:opacity-40"
+              >
+                <img src="/game/icons/lockpick.png" alt="" className="size-5 rounded-sm object-contain" />
+                <span className="text-sm tabular-nums">×{actor?.bag.lockpick ?? 0}</span>
+              </button>
+            </ItemTip>
           )}
           <Button size="sm" variant="quiet" disabled={!showAct || hud.busy} onClick={() => engine.wait()}>
             Esperar
@@ -4716,30 +4750,30 @@ function BattleScreen({
                 const empty = !action;
                 const disabled = action ? slotDisabled(action) : !editingSlots;
                 return (
-                  <button
-                    key={i}
-                    type="button"
-                    disabled={!editingSlots && disabled}
-                    onClick={() => activateSlot(i)}
-                    title={`F${i + 1} · ${action ? slotTooltip(action) : "Slot vazio"}`}
-                    className={`relative size-9 grid place-items-center rounded-md border ${
-                      action && slotActive(action) ? "border-accent bg-accent/20" : "border-border bg-bg"
-                    } ${editingSlots ? "outline outline-1 outline-dashed outline-muted" : ""} disabled:opacity-40`}
-                  >
-                    <span className="absolute -top-1 -left-1 bg-surface border border-border rounded px-0.5 text-[8px] tabular-nums leading-tight text-muted">
-                      F{i + 1}
-                    </span>
-                    {empty ? (
-                      <span className="text-muted text-xs">+</span>
-                    ) : (
-                      <>
-                        <img src={slotIcon(action)} alt="" className="size-6 rounded-sm object-cover" />
-                        <span className="absolute -bottom-1 -right-1 bg-surface border border-border rounded px-0.5 text-[9px] tabular-nums leading-tight">
-                          {slotCount(action, actor)}
-                        </span>
-                      </>
-                    )}
-                  </button>
+                  <ItemTip key={i} text={`F${i + 1} · ${action ? slotTooltip(action) : "Slot vazio"}`} className="relative">
+                    <button
+                      type="button"
+                      disabled={!editingSlots && disabled}
+                      onClick={() => activateSlot(i)}
+                      className={`relative size-9 grid place-items-center rounded-md border ${
+                        action && slotActive(action) ? "border-accent bg-accent/20" : "border-border bg-bg"
+                      } ${editingSlots ? "outline outline-1 outline-dashed outline-muted" : ""} disabled:opacity-40`}
+                    >
+                      <span className="absolute -top-1 -left-1 bg-surface border border-border rounded px-0.5 text-[8px] tabular-nums leading-tight text-muted">
+                        F{i + 1}
+                      </span>
+                      {empty ? (
+                        <span className="text-muted text-xs">+</span>
+                      ) : (
+                        <>
+                          <img src={slotIcon(action)} alt="" className="size-6 rounded-sm object-cover" />
+                          <span className="absolute -bottom-1 -right-1 bg-surface border border-border rounded px-0.5 text-[9px] tabular-nums leading-tight">
+                            {slotCount(action, actor)}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  </ItemTip>
                 );
               })}
               <button
@@ -4844,6 +4878,11 @@ function BattleScreen({
           // as well as the live unit, so a swap made in a fight is permanent whether the
           // battle is won, lost or retried.
           onEquipWeapon={(hero, weaponId) => {
+            if (!weaponId) {
+              if (!engine.equipWeaponOn(unit.id, "", 0)) return;
+              onEquipWeapon?.(hero, "", false);
+              return;
+            }
             const owned = save.weapons[weaponId] != null;
             const found = engine.lootWeapons.includes(weaponId);
             if (!owned && !found) return;
@@ -4852,6 +4891,11 @@ function BattleScreen({
             onEquipWeapon?.(hero, weaponId, !owned);
           }}
           onEquipItem={(hero, slot, itemId) => {
+            if (!itemId) {
+              if (!engine.equipItemOn(unit.id, slot, null)) return;
+              onEquipItem?.(hero, slot, null, false);
+              return;
+            }
             const owned = (save.looseEquipment[itemId] ?? 0) > 0 || Object.values(save.equipment).some((slots) => Object.values(slots).includes(itemId));
             const found = engine.lootEquipment.includes(itemId);
             if (!owned && !found) return;
@@ -4905,15 +4949,20 @@ function SlotPicker({
         </div>
         <div className="grid grid-cols-1 gap-1.5 max-h-[60dvh] overflow-y-auto">
           {options.map((action) => (
-            <button
+            <ItemTip
               key={action.kind === "potion" ? `p-${action.potion}` : `s-${action.spell}`}
-              type="button"
-              onClick={() => onPick(action)}
-              className="flex items-center gap-2 bg-bg border border-border rounded-md px-2 py-2 text-left"
+              text={action.kind === "potion" ? potionTooltip(action.potion) : slotLabel(action)}
+              className="block"
             >
-              <img src={slotIcon(action)} alt="" className="size-6 rounded-sm object-cover shrink-0" />
-              <span className="text-sm">{slotLabel(action)}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onPick(action)}
+                className="w-full flex items-center gap-2 bg-bg border border-border rounded-md px-2 py-2 text-left"
+              >
+                <img src={slotIcon(action)} alt="" className="size-6 rounded-sm object-cover shrink-0" />
+                <span className="text-sm">{slotLabel(action)}</span>
+              </button>
+            </ItemTip>
           ))}
           <button
             type="button"

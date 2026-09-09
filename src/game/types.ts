@@ -539,7 +539,7 @@ export interface HudSnapshot {
   /** Set the instant a chest is opened, cleared only when the player dismisses the popup
    * (see acknowledgeChestLoot) — not a transient "just happened" flag like tip, so it
    * survives sitting on screen until the player actually reads it. */
-  chestLoot: { unitName: string; ember: number; items: { name: string; icon: string }[] } | null;
+  chestLoot: { unitName: string; ember: number; items: { name: string; icon: string; tip?: string }[] } | null;
 }
 
 export interface WalkDirs {

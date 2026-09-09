@@ -1,4 +1,4 @@
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, lightningDice, lightningFormula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, lightningDice, lightningFormula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses } from "./data";
 import type { SpellTier } from "./data";
 import { canCounter, makeForecast, mulberry32, powerOf, protOf, rollDamage, rollDamageCustom } from "./combat";
 import {
@@ -639,7 +639,7 @@ export class BattleEngine {
   log: string[] = [];
   /** See HudSnapshot.chestLoot — set the instant a chest opens, cleared only by
    * acknowledgeChestLoot() (the player's "Ok" on the popup), not by anything time-based. */
-  private chestLoot: { unitName: string; ember: number; items: { name: string; icon: string }[] } | null = null;
+  private chestLoot: { unitName: string; ember: number; items: { name: string; icon: string; tip?: string }[] } | null = null;
   tip: string | null;
   private lastTipSeen: string | null = null;
   private tipSetAt = 0;
@@ -3589,19 +3589,17 @@ export class BattleEngine {
   }
 
   /** Arms a potion: the next tap on self or an adjacent ally (see confirmPotionAt) applies
-   * it and spends the actor's turn. Self is always in range (distance 0), so this covers
-   * the old instant self-drink too — it just now takes the one confirming tap every other
-   * targeted action already asks for. */
+   * it and spends the actor's action — same as attacking or casting, never a free extra. */
   usePotion(kind: PotionId): void {
     const u = this.units.find((x) => x.id === this.selectedId);
-    if (!u || u.side !== "player" || !u.alive) return;
+    if (!u || u.side !== "player" || !u.alive || u.acted) return;
     if (this.mode !== "awaitAction" && this.mode !== "selected" && this.mode !== "awaitAttack" && this.mode !== "awaitSpell")
       return;
     if (this.phase !== "player" || this.result) return;
     if (u.bag[kind] <= 0) return;
     this.mode = "awaitPotion";
     this.potionAim = kind;
-    this.tip = `${potionLabel(kind)}: toque em você ou num aliado adjacente. Não gasta ação.`;
+    this.tip = `${potionLabel(kind)}: toque em você ou num aliado adjacente. Gasta a ação.`;
     sfxPlay.ui();
   }
 
@@ -3646,8 +3644,8 @@ export class BattleEngine {
       actor.y = Math.round(actor.drawY);
       this.tip = `${def.name} · ${target.name} curado(a) da doença.`;
       this.emitBeneficialGlow(target);
-      this.mode = "awaitAction";
       sfxPlay.ui();
+      this.finishAction(actor);
       return;
     }
     if (def.effect === "mana") {
@@ -3684,8 +3682,8 @@ export class BattleEngine {
       });
       this.tip = `${def.name} · +${restored} usos de magia (${target.name})`;
       this.emitBeneficialGlow(target);
-      this.mode = "awaitAction";
       sfxPlay.ui();
+      this.finishAction(actor);
       return;
     }
     if (target.hp >= target.maxHp) {
@@ -3715,8 +3713,8 @@ export class BattleEngine {
     });
     this.tip = `${potionLabel(kind)} · +${gained} HP (${target.name})`;
     this.emitBeneficialGlow(target);
-    this.mode = "awaitAction";
     sfxPlay.ui();
+    this.finishAction(actor);
   }
 
   /** Ground a chest sits on — the neighboring floor, never the grass hex in chest001. */
@@ -3783,6 +3781,17 @@ export class BattleEngine {
     const u = this.units.find((x) => x.id === unitId);
     if (!u || u.side !== "player" || !u.alive) return false;
     if (this.phase !== "player" || this.result) return false;
+    if (!weaponId) {
+      u.weaponId = null;
+      u.weaponEnh = 0;
+      u.minRange = CLASSES[u.classId].minRange;
+      u.maxRange = CLASSES[u.classId].maxRange;
+      this.reapplyGear(u);
+      this.tip = `${u.name} guardou a arma.`;
+      this.pushLog(this.tip);
+      sfxPlay.ui();
+      return true;
+    }
     const def = WEAPONS[weaponId];
     if (!def) return false;
 
@@ -3820,7 +3829,7 @@ export class BattleEngine {
     if (!u || u.side !== "player" || !u.alive) return false;
     if (this.phase !== "player" || this.result) return false;
     const item = itemId ? EQUIPMENT[itemId] : null;
-    if (itemId && (!item || item.slot !== slot)) return false;
+    if (itemId && (!item || !equipmentFitsSlot(item, slot))) return false;
     if (slot === "offHand" && itemId && offHandBlocked(u.weaponId)) return false;
 
     if (itemId) {
@@ -3841,7 +3850,7 @@ export class BattleEngine {
     if (slot === "offHand") u.offHandId = itemId;
     this.reapplyGear(u);
 
-    this.tip = item ? `${u.name} equipou ${item.name}.` : `${u.name} tirou o item de ${slot}.`;
+    this.tip = item ? `${u.name} equipou ${item.name}.` : `${u.name} tirou o item de ${equipmentSlotName(slot)}.`;
     this.pushLog(this.tip);
     sfxPlay.ui();
     return true;
@@ -3883,7 +3892,7 @@ export class BattleEngine {
       kind: "impact",
       frame: 0,
     });
-    const found: { name: string; icon: string }[] = [];
+    const found: { name: string; icon: string; tip?: string }[] = [];
     if (wasChest) {
       // Every chest gives Ember, a guaranteed potion (weighted so the weak tier is the
       // common case, rarer as potency climbs), and — a separate, independent roll — a
@@ -3896,17 +3905,17 @@ export class BattleEngine {
       this.lootEmber += gain;
       const potionKind = weightedPotionPick(this.rng);
       if (this.givePotion(u, potionKind)) {
-        found.push({ name: POTIONS[potionKind].name, icon: `/game/icons/potion-${potionKind}.png?v=ds2` });
+        found.push({ name: POTIONS[potionKind].name, icon: `/game/icons/potion-${potionKind}.png?v=ds2`, tip: potionTooltip(potionKind) });
       }
       if (this.rng() < (better ? CHEST_LOOT.betterGearChance : CHEST_LOOT.gearChance)) {
         const drop = weightedLootPick(this.rng, missionGearLevel(this.mission.index), this.ownedWeapons);
         if (drop.kind === "weapon") {
           this.ownedWeapons.add(drop.id);
           this.lootWeapons.push(drop.id);
-          found.push({ name: WEAPONS[drop.id]!.name, icon: weaponIcon(drop.id) });
+          found.push({ name: WEAPONS[drop.id]!.name, icon: weaponIcon(drop.id), tip: weaponTooltip(WEAPONS[drop.id]!) });
         } else {
           this.lootEquipment.push(drop.id);
-          found.push({ name: EQUIPMENT[drop.id]!.name, icon: equipmentIcon(drop.id) });
+          found.push({ name: EQUIPMENT[drop.id]!.name, icon: equipmentIcon(drop.id), tip: equipmentTooltip(EQUIPMENT[drop.id]!) });
         }
       }
       const foundNames = found.map((f) => f.name).join(", ");

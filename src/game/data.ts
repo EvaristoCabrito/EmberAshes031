@@ -1345,8 +1345,8 @@ export const EQUIPMENT_SLOTS: { id: EquipSlot; label: string }[] = [
   { id: "waist", label: "Cintura" },
   { id: "legs", label: "Pernas" },
   { id: "feet", label: "Pés" },
-  { id: "ring1", label: "Anel" },
-  { id: "ring2", label: "Anel" },
+  { id: "ring1", label: "Anel 1" },
+  { id: "ring2", label: "Anel 2" },
   { id: "offHand", label: "Mão Secundária" },
 ];
 
@@ -1469,6 +1469,23 @@ export function offHandBlocked(mainHandWeaponId: string | null): boolean {
   return !!w?.twoHanded;
 }
 
+/** Ring 1 and ring 2 share one pool — every ring is authored as `ring1`, and both fingers
+ * accept that type. Other slots only match their own id. */
+export function equipmentFitsSlot(item: EquipmentDef, slot: EquipSlot): boolean {
+  if (item.slot === slot) return true;
+  return (item.slot === "ring1" || item.slot === "ring2") && (slot === "ring1" || slot === "ring2");
+}
+
+export function equipmentSlotName(slot: EquipSlot): string {
+  return EQUIPMENT_SLOTS.find((s) => s.id === slot)?.label ?? slot;
+}
+
+/** Where this piece belongs on the doll — rings mention both fingers since either can wear them. */
+export function equipmentTypeSlotName(item: EquipmentDef): string {
+  if (item.slot === "ring1" || item.slot === "ring2") return "Anel (espaço 1 ou 2)";
+  return equipmentSlotName(item.slot);
+}
+
 /** Short "+N STAT" summary line for a passive-stat EquipmentDef, classic-RPG-tooltip style. */
 /** Every stat worn gear contributes, summed across the slots a unit has filled.
  *
@@ -1502,6 +1519,45 @@ export function equipmentStatSummary(it: EquipmentDef): string {
   if (it.res) parts.push(`${it.res > 0 ? "+" : ""}${it.res} RES`);
   if (it.mov) parts.push(`${it.mov > 0 ? "+" : ""}${it.mov} Mov`);
   return parts.join(" · ");
+}
+
+/** Full hover card for a piece of gear — name, which slot, stats, who can wear it. */
+export function equipmentTooltip(it: EquipmentDef): string {
+  const lines = [it.name, `Espaço: ${equipmentTypeSlotName(it)}`];
+  const stats = equipmentStatSummary(it);
+  if (stats) lines.push(stats);
+  if (it.kind === "shield") lines.push(`Investida de Escudo · ${Math.round((it.dmgMul ?? 0.75) * 100)}% dano · 70% atordoa`);
+  if (it.kind === "weapon") lines.push(`${it.dice}D${it.faces}${it.bonus ? `+${it.bonus}` : ""} · Mão secundária`);
+  if (it.usableBy && it.usableBy.length > 0) {
+    lines.push(`Usável: ${it.usableBy.map((c) => CLASSES[c]?.name ?? c).join(", ")}`);
+  }
+  if (it.price) lines.push(`${it.price} Ember`);
+  return lines.join("\n");
+}
+
+export function weaponTooltip(w: WeaponDef, enh = 0): string {
+  const lines = [`${w.name}${enh > 0 ? ` +${enh}` : ""}`, `${weaponDiceLabel(w.id)} · ${weaponRangeLabel(w.id)}`, "Espaço: Mão principal"];
+  if (w.twoHanded) lines.push("Duas mãos");
+  if (w.ranged) lines.push("À distância");
+  if (w.bonusClass) lines.push(`+10% dano · ${CLASSES[w.bonusClass]?.name ?? w.bonusClass}`);
+  if (w.price) lines.push(`${w.price} Ember`);
+  return lines.join("\n");
+}
+
+export function potionTooltip(kind: PotionId): string {
+  const p = POTIONS[kind];
+  const lines = [p.name];
+  if (p.effect === "heal") lines.push(`Cura ${diceFormula(p.dice, p.faces, p.bonus)}`, "Gasta a ação do turno");
+  else if (p.effect === "disease") lines.push("Cura doença e veneno", "Gasta a ação do turno");
+  else if (p.effect === "mana") {
+    const n = p.manaRestore ?? 0;
+    lines.push(`Restaura ${n} uso${n === 1 ? "" : "s"} de cada magia disponível (sem passar do máximo)`, "Gasta a ação do turno");
+  }
+  return lines.join("\n");
+}
+
+export function lockpickTooltip(): string {
+  return "Gazua\nAbre um baú ou porta trancada adjacente.\nGasta a ação do turno.";
 }
 
 export function equipmentIcon(id: string): string {
