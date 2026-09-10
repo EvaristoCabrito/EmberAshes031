@@ -643,7 +643,7 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     mov: 5,
     minRange: 1,
     maxRange: 2,
-    sprite: "lancer",
+    sprite: "defaultLancer",
     size: 1,
     init: 4,
   },

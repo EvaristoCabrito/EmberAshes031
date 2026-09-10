@@ -489,7 +489,7 @@ function spawnUnit(spawn: Mission["playerSpawns"][number], side: Unit["side"], i
     className: cls.name,
     role: cls.role,
     side,
-    sprite: cls.sprite,
+    sprite: spawn.name === "Aldric" && side === "player" ? "aldric" : cls.sprite,
     x: spawn.x,
     y: spawn.y,
     hp,
@@ -585,7 +585,7 @@ function unitFromSnap(snap: BattleUnitSnap): Unit {
     className: cls?.name ?? snap.classId,
     role: cls?.role ?? "",
     side: snap.side,
-    sprite: cls?.sprite ?? "soldier",
+    sprite: snap.name === "Aldric" && snap.side === "player" ? "aldric" : (cls?.sprite ?? "soldier"),
     x: snap.x,
     y: snap.y,
     hp: snap.hp,
@@ -1232,7 +1232,7 @@ export class BattleEngine {
     if (this.trauma > 0) this.trauma = Math.max(0, this.trauma - cap * 2.2);
     for (const u of this.units) {
       if (u.flash > 0) u.flash = Math.max(0, u.flash - cap * 4);
-      if (u.levelGlow > 0) u.levelGlow = Math.max(0, u.levelGlow - cap * 0.18);
+      if (u.levelGlow > 0) u.levelGlow = Math.max(0, u.levelGlow - cap * 0.42);
       if (u.healGlow > 0) u.healGlow = Math.max(0, u.healGlow - cap * 0.7);
       if (!u.alive && u.fade > 0) u.fade = Math.max(0, u.fade - cap * 2.4);
       if (u.alive) {
@@ -1268,7 +1268,7 @@ export class BattleEngine {
         }
         s.dx += s.vx * cap;
         s.dy += s.vy * cap;
-        s.vy += s.refCell * 0.9 * cap;
+        if (s.kind !== "label") s.vy += s.refCell * 0.9 * cap;
         s.rot += s.vrot * cap;
         live += 1;
       }
@@ -1347,7 +1347,7 @@ export class BattleEngine {
    * the historical "facing = 1 shows the sheet as drawn" convention. */
   private faceSpriteToward(id: string, x: number): void {
     const u = this.units.find((n) => n.id === id);
-    if (!u || (u.sprite !== "malrec" && u.sprite !== "aldric" && u.sprite !== "lancer" && u.sprite !== "conjurer")) return;
+    if (!u || (u.sprite !== "malrec" && u.sprite !== "aldric" && u.sprite !== "defaultLancer" && u.sprite !== "lancer" && u.sprite !== "conjurer")) return;
     if (x > u.x) u.facing = 1;
     else if (x < u.x) u.facing = -1;
   }
@@ -2310,21 +2310,21 @@ export class BattleEngine {
         refCell: cell,
       });
     }
-    const n = 28;
+    const n = 18;
     for (let i = 0; i < n; i++) {
       const angle = (Math.PI * 2 * i) / n + (this.rng() - 0.5) * 0.4;
-      const speed = cell * (1.05 + this.rng() * 1.35);
+      const speed = cell * (0.9 + this.rng() * 1.1);
       spawn({
         unitId: u.id,
         kind: "star",
         dx: 0,
         dy: -cell * 0.55,
         vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed * 0.7 - cell * 0.75,
+        vy: Math.sin(angle) * speed * 0.7 - cell * 0.6,
         life: 0,
-        max: 1.05 + this.rng() * 0.65,
-        size: cell * (0.06 + this.rng() * 0.07),
-        hue: 38 + this.rng() * 22,
+        max: 0.85 + this.rng() * 0.5,
+        size: cell * (0.05 + this.rng() * 0.05),
+        hue: 42 + this.rng() * 20,
         rot: this.rng() * Math.PI,
         vrot: (this.rng() - 0.5) * 6,
         refCell: cell,
@@ -2333,14 +2333,14 @@ export class BattleEngine {
     spawn({
       unitId: u.id,
       kind: "label",
-      text: `NÍVEL ${level}!`,
+      text: `Nível ${level}`,
       dx: 0,
-      dy: -cell * 1.55,
+      dy: 0,
       vx: 0,
-      vy: -cell * 0.12,
+      vy: -this.layout.tile * 0.05,
       life: 0,
-      max: 2.6,
-      size: cell * 0.52,
+      max: 2.2,
+      size: this.layout.tile * Math.sqrt(3) * 0.5,
       hue: 46,
       rot: 0,
       vrot: 0,
@@ -5567,7 +5567,7 @@ export class BattleEngine {
       };
     }
     const heavy = u.size >= 4 ? 1.4 : u.size === 2 ? 1.12 : 1;
-    if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "lancer" || u.sprite === "conjurer" || u.size >= 4) {
+    if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "conjurer" || u.size >= 4) {
       return { bob: 0, sway: 0, breath: 0 };
     }
     const bob = Math.sin(t * 1.55) * (1.15 * heavy);
@@ -5991,8 +5991,9 @@ export class BattleEngine {
       // Depends on that creature's own sprite frames being cropped to roughly the same
       // canvas-fill ratio as the others — this correction assumes that, it doesn't measure it.
       const isBigCreatureFootprint = u.footprintOffsets === FOOTPRINT_TYPE_8 || u.footprintOffsets === FOOTPRINT_TYPE_7;
-      const h = cell * (s >= 4 ? 3.35 : s === 2 ? 1.72 : boss ? 1.44 : 1.42) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1);
-      const w = cell * (s >= 4 ? 2.85 : s === 2 ? 1.85 : boss ? 1.12 : 1.11) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1);
+      const lancerScale = u.sprite === "aldric" || u.sprite === "defaultLancer" ? 1.4 : 1;
+      const h = cell * (s >= 4 ? 3.35 : s === 2 ? 1.72 : boss ? 1.44 : 1.42) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1) * lancerScale;
+      const w = cell * (s >= 4 ? 2.85 : s === 2 ? 1.85 : boss ? 1.12 : 1.11) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1) * lancerScale;
       // Big creatures plant their feet at the bottom corner of their front hex (tile * 0.9,
       // matching the hex outline radius used elsewhere) instead of the smaller offset tuned
       // for normal-size sprites, so the feet don't float above the tile they stand on.
@@ -6000,22 +6001,21 @@ export class BattleEngine {
       ctx.translate(px + sway, py + footY + bob);
       // Dedicated left/right walk+attack cuts already face the enemy, so flipping
       // them would put the spear/staff on the wrong side. Idle still flips.
-      const dirAction = (u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "lancer") && (atk != null || moving);
+      const dirAction = (u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer") && (atk != null || moving);
       const flip = dirAction ? 1 : u.facing;
-      if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "lancer" || u.sprite === "conjurer") ctx.scale(flip, 1);
+      if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "conjurer") ctx.scale(flip, 1);
       else ctx.scale(flip * (1 - breath * 0.22), 1 + breath);
       if (u.levelGlow > 0) {
-        const pulse = 0.7 + Math.sin(this.time * 6.2) * 0.3;
-        const bg = ctx.createRadialGradient(0, -h * 0.5, 0, 0, -h * 0.5, w * 1.65);
-        bg.addColorStop(0, `rgba(255,226,140,${0.62 * u.levelGlow * pulse})`);
-        bg.addColorStop(0.45, `rgba(255,196,70,${0.28 * u.levelGlow * pulse})`);
+        const pulse = 0.75 + Math.sin(this.time * 7) * 0.25;
+        const bg = ctx.createRadialGradient(0, -h * 0.5, 0, 0, -h * 0.5, w * 1.15);
+        bg.addColorStop(0, `rgba(255,214,120,${0.5 * u.levelGlow * pulse})`);
         bg.addColorStop(1, "rgba(255,214,120,0)");
         ctx.fillStyle = bg;
         ctx.beginPath();
-        ctx.arc(0, -h * 0.5, w * 1.65, 0, Math.PI * 2);
+        ctx.arc(0, -h * 0.5, w * 1.15, 0, Math.PI * 2);
         ctx.fill();
-        ctx.shadowColor = `rgba(255,214,90,${0.98 * u.levelGlow})`;
-        ctx.shadowBlur = w * 0.62 * u.levelGlow * pulse;
+        ctx.shadowColor = `rgba(255,208,110,${0.95 * u.levelGlow})`;
+        ctx.shadowBlur = w * 0.4 * u.levelGlow * pulse;
       }
       // Heal / potion halo on the sprite itself. Palette comes from healGlowKind so Cura
       // Menor, Cura Média, Curar Doença, the new potion burst and Potionzero all read apart.
@@ -6044,8 +6044,8 @@ export class BattleEngine {
       // rim glow following the art's own alpha edges) so the effect reads as coming off the
       // character rather than just floating behind it.
       if (u.levelGlow > 0 && img) {
-        const pulse = 0.7 + Math.sin(this.time * 6.2) * 0.3;
-        ctx.shadowBlur = w * 0.8 * u.levelGlow * pulse;
+        const pulse = 0.75 + Math.sin(this.time * 7) * 0.25;
+        ctx.shadowBlur = w * 0.55 * u.levelGlow * pulse;
         ctx.drawImage(img, -w / 2, -h, w, h);
       }
       if (u.healGlow > 0 && img) {
@@ -6083,27 +6083,6 @@ export class BattleEngine {
           ctx.fillStyle = "#f0ebe3";
           ctx.strokeText(`${u.hp}`, px, by - 1);
           ctx.fillText(`${u.hp}`, px, by - 1);
-        }
-        if (u.levelGlow > 0) {
-          const pulse = 0.78 + Math.sin(this.time * 6.2) * 0.22;
-          const fontPx = Math.round(cell * (s >= 4 ? 0.72 : 0.58));
-          const numY = by - Math.max(10, cell * 0.22);
-          ctx.save();
-          ctx.textAlign = "center";
-          ctx.textBaseline = "bottom";
-          ctx.font = `900 ${fontPx}px Figtree, sans-serif`;
-          ctx.shadowColor = `rgba(255, 210, 70, ${0.95 * u.levelGlow * pulse})`;
-          ctx.shadowBlur = fontPx * 0.9;
-          ctx.lineJoin = "round";
-          ctx.lineWidth = Math.max(5, fontPx * 0.2);
-          ctx.strokeStyle = "rgba(42, 24, 4, 0.92)";
-          ctx.strokeText(String(u.level), px, numY);
-          ctx.fillStyle = `rgba(255, 228, 120, ${0.35 + 0.65 * u.levelGlow * pulse})`;
-          ctx.fillText(String(u.level), px, numY);
-          ctx.shadowBlur = fontPx * 1.5;
-          ctx.fillStyle = `rgba(255, 248, 200, ${0.55 * u.levelGlow * pulse})`;
-          ctx.fillText(String(u.level), px, numY);
-          ctx.restore();
         }
         if (u.stunned) {
           const gx = px;
@@ -6188,14 +6167,22 @@ export class BattleEngine {
           continue;
         }
         if (s.kind === "label") {
+          const tileNow = this.layout.tile;
+          const cellNow = tileNow * Math.sqrt(3);
+          const us = unitSize(unit);
+          const boss = unit.classId === "captain";
+          const isBig = unit.footprintOffsets === FOOTPRINT_TYPE_8 || unit.footprintOffsets === FOOTPRINT_TYPE_7;
+          const hh = cellNow * (us >= 4 ? 3.35 : us === 2 ? 1.72 : boss ? 1.44 : 1.42) * 1.2 * (isBig ? 0.75 : 1);
+          const footY = us >= 4 ? tileNow * 0.9 : cellNow * 0.42;
+          const { cx: upx, cy: upy } = this.unitPixel(unit);
           const labelFade = k < 0.12 ? k / 0.12 : k > 0.75 ? Math.max(0, 1 - (k - 0.75) / 0.25) : 1;
           const pop = k < 0.12 ? 1.35 - 0.35 * (k / 0.12) : 1;
           ctx.save();
           ctx.globalAlpha = labelFade;
-          ctx.translate(x, y);
+          ctx.translate(upx + s.dx, upy + footY - hh + s.dy);
           ctx.scale(pop, pop);
           ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
+          ctx.textBaseline = "bottom";
           ctx.font = `900 ${Math.round(s.size)}px Figtree, sans-serif`;
           ctx.shadowColor = `hsla(${s.hue}, 100%, 65%, 0.95)`;
           ctx.shadowBlur = s.size * 0.9;

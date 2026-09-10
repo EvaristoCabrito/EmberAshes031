@@ -56,7 +56,7 @@ export function tileVariantSrc(id: TerrainId, variant: number): string {
   return `/game/tiles/${tileVariantName(id, variant)}.png?v=55`;
 }
 const TILES = Object.keys(TILE_VARIANT_COUNT) as TerrainId[];
-const SPRITES: SpriteId[] = ["kael", "nira", "voss", "salazar", "malrec", "aldric", "soldier", "brigand", "captain", "sorcerer", "horror", "Asherah", "pikeman", "wardog", "troll", "morvenian-wolf", "butcher", "birolho", "familiar", "swamp-blue-calf", "ancient-golem", "lancer", "conjurer"];
+const SPRITES: SpriteId[] = ["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "soldier", "brigand", "captain", "sorcerer", "horror", "Asherah", "pikeman", "wardog", "troll", "morvenian-wolf", "butcher", "birolho", "familiar", "swamp-blue-calf", "ancient-golem", "lancer", "conjurer"];
 
 const LOAD_POOL = 8;
 let loadActive = 0;
@@ -111,7 +111,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 // big horrors, and the two creatures cut from reference video (familiar, ancient golem).
 // loadGameArt rejects on any missing file, so this set and what is on disk have to move
 // together.
-const HERO_IDLE = new Set<SpriteId>(["kael", "nira", "voss", "salazar", "malrec", "aldric", "horror", "Asherah", "familiar", "ancient-golem", "lancer", "conjurer"]);
+const HERO_IDLE = new Set<SpriteId>(["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "horror", "Asherah", "familiar", "ancient-golem", "lancer", "conjurer"]);
 
 export async function loadGameArt(): Promise<GameArt> {
   const tiles = {} as Record<TerrainId, HTMLImageElement[]>;
@@ -132,7 +132,7 @@ export async function loadGameArt(): Promise<GameArt> {
   await Promise.all(
     SPRITES.map(async (id) => {
       const n = HERO_IDLE.has(id) ? 12 : 4;
-      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" ? "?v=sheet2" : id === "lancer" ? "?v=3" : id === "conjurer" ? "?v=5" : "";
+      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" || id === "defaultLancer" ? "?v=sheet2" : id === "lancer" ? "?v=3" : id === "conjurer" ? "?v=5" : "";
       sprites[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(`/game/sprites/${id}/${i + 1}.png${cacheBust}`)));
     }),
   );
@@ -146,6 +146,7 @@ export async function loadGameArt(): Promise<GameArt> {
     salazar: { n: 4, bust: "" },
     malrec: { n: 5, bust: "?v=sheet2" },
     aldric: { n: 5, bust: "?v=sheet2" },
+    defaultLancer: { n: 5, bust: "?v=sheet2" },
     familiar: { n: 8, bust: "?v=6" },
     "ancient-golem": { n: 8, bust: "" },
     "morvenian-wolf": { n: 6, bust: "" },
@@ -180,6 +181,7 @@ export async function loadGameArt(): Promise<GameArt> {
     "ancient-golem": { n: 8, bust: "" },
     malrec: { n: 6, bust: "?v=sheet2" },
     aldric: { n: 6, bust: "?v=sheet2" },
+    defaultLancer: { n: 6, bust: "?v=sheet2" },
     lancer: { n: 6, bust: "?v=3" },
   };
   const walks: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
@@ -191,7 +193,7 @@ export async function loadGameArt(): Promise<GameArt> {
   );
   const walksLeft: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
   const attacksLeft: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
-  const DIR_LEFT: SpriteId[] = ["malrec", "aldric", "lancer"];
+  const DIR_LEFT: SpriteId[] = ["malrec", "aldric", "defaultLancer", "lancer"];
   await Promise.all(
     DIR_LEFT.map(async (id) => {
       const walkN = WALK_FRAMES[id]?.n ?? 6;

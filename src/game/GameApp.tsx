@@ -228,6 +228,7 @@ const HERO_PORTRAIT: Partial<Record<string, string>> = {
   salazar: "/game/portraits/salazar.png",
   malrec: "/game/portraits/malrec.png",
   aldric: "/game/portraits/aldric.png",
+  defaultLancer: "/game/portraits/aldric.png",
 };
 
 // Carried-bag icon follows the waist pouch equipped on that hero (small / large / satchel).
