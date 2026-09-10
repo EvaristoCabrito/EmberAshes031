@@ -489,7 +489,7 @@ function spawnUnit(spawn: Mission["playerSpawns"][number], side: Unit["side"], i
     className: cls.name,
     role: cls.role,
     side,
-    sprite: spawn.name === "Aldric" && side === "player" ? "aldric" : cls.sprite,
+    sprite: cls.sprite,
     x: spawn.x,
     y: spawn.y,
     hp,
@@ -585,7 +585,7 @@ function unitFromSnap(snap: BattleUnitSnap): Unit {
     className: cls?.name ?? snap.classId,
     role: cls?.role ?? "",
     side: snap.side,
-    sprite: snap.name === "Aldric" && snap.side === "player" ? "aldric" : (cls?.sprite ?? "soldier"),
+    sprite: cls?.sprite ?? "soldier",
     x: snap.x,
     y: snap.y,
     hp: snap.hp,
@@ -5991,9 +5991,8 @@ export class BattleEngine {
       // Depends on that creature's own sprite frames being cropped to roughly the same
       // canvas-fill ratio as the others — this correction assumes that, it doesn't measure it.
       const isBigCreatureFootprint = u.footprintOffsets === FOOTPRINT_TYPE_8 || u.footprintOffsets === FOOTPRINT_TYPE_7;
-      const lancerScale = u.sprite === "aldric" || u.sprite === "defaultLancer" ? 1.4 : 1;
-      const h = cell * (s >= 4 ? 3.35 : s === 2 ? 1.72 : boss ? 1.44 : 1.42) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1) * lancerScale;
-      const w = cell * (s >= 4 ? 2.85 : s === 2 ? 1.85 : boss ? 1.12 : 1.11) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1) * lancerScale;
+      const h = cell * (s >= 4 ? 3.35 : s === 2 ? 1.72 : boss ? 1.44 : 1.42) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1);
+      const w = cell * (s >= 4 ? 2.85 : s === 2 ? 1.85 : boss ? 1.12 : 1.11) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1);
       // Big creatures plant their feet at the bottom corner of their front hex (tile * 0.9,
       // matching the hex outline radius used elsewhere) instead of the smaller offset tuned
       // for normal-size sprites, so the feet don't float above the tile they stand on.
