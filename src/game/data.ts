@@ -647,6 +647,39 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     size: 1,
     init: 4,
   },
+  sandoval: {
+    id: "sandoval",
+    name: "Sandoval",
+    role: "Lanceiro rival · Chefe",
+    hp: 58,
+    atk: 15,
+    mag: 0,
+    def: 10,
+    res: 6,
+    mov: 5,
+    minRange: 1,
+    maxRange: 2,
+    sprite: "sandoval",
+    size: 1,
+    init: 5,
+    boss: true,
+  },
+  kaelFinal: {
+    id: "kaelFinal",
+    name: "Kael Final",
+    role: "Espadachim · Teste visual",
+    hp: 34,
+    atk: 9,
+    mag: 0,
+    def: 6,
+    res: 3,
+    mov: 5,
+    minRange: 1,
+    maxRange: 1,
+    sprite: "kaelFinal",
+    size: 1,
+    init: 7,
+  },
   conjurer: {
     id: "conjurer",
     name: "Conjurador",
@@ -893,6 +926,8 @@ export const GROWTH: Record<ClassId, { hp: number; atk: number; mag: number; def
   assassin: { hp: 3, atk: 3, mag: 0, def: 1, res: 1 },
   rogue: { hp: 3, atk: 2, mag: 0, def: 1, res: 1 },
   lancer: { hp: 4, atk: 2, mag: 0, def: 2, res: 1 },
+  sandoval: { hp: 5, atk: 3, mag: 0, def: 2, res: 1 },
+  kaelFinal: { hp: 4, atk: 2, mag: 0, def: 2, res: 1 },
   // Same shape as mage's growth (atk/mag/def) but hp grows slower and res grows faster,
   // matching CLASSES.conjurer's base-stat deltas — see the note there.
   conjurer: { hp: 2, atk: 0, mag: 3, def: 1, res: 4 },
@@ -946,6 +981,10 @@ export function expForHit(attackerLevel: number, defenderLevel: number): number 
  * the flag: it shows up in the editor's "Invocação" brush and is kept out of the party's
  * defeat check without another list to remember. */
 export const SUMMON_CLASSES: ClassId[] = (Object.keys(CLASSES) as ClassId[]).filter((c) => !!CLASSES[c].summon);
+
+export function isBossClass(classId: ClassId): boolean {
+  return !!CLASSES[classId]?.boss;
+}
 
 export function isSummonClass(classId: ClassId): boolean {
   return !!CLASSES[classId]?.summon;
@@ -1183,9 +1222,9 @@ const ARCANE_CONJURER_TRIO: ClassId[] = ["conjurer", "sorcerer", "necromancer"];
 // Both arcane trios pool together: any arcane caster can wield any arcane staff, per design.
 const ARCANE_ALL: ClassId[] = [...ARCANE_MAGE_TRIO, ...ARCANE_CONJURER_TRIO];
 const HEAL_TRIO: ClassId[] = ["healer", "bishop", "cleric"];
-const WARRIOR_TRIO: ClassId[] = ["swordsman", "paladin", "heavyKnight"];
+const WARRIOR_TRIO: ClassId[] = ["swordsman", "kaelFinal", "paladin", "heavyKnight"];
 const ARCHER_TRIO: ClassId[] = ["archer", "ranger", "assassin"];
-const LANCER_TRIO: ClassId[] = ["lancer", "sentinel", "templar"];
+const LANCER_TRIO: ClassId[] = ["lancer", "sandoval", "sentinel", "templar"];
 // Light armor: scouts, the warrior line, the lancer line, and the rogue. Front-liners
 // still wear mail/plate — leather is the lighter option (often +mov), not a scout exclusive.
 const LEATHER_WEARERS: ClassId[] = [...ARCHER_TRIO, ...WARRIOR_TRIO, ...LANCER_TRIO, "rogue"];

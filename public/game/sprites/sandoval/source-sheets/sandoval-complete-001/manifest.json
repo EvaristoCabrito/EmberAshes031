@@ -1,0 +1,13 @@
+{
+  "id": "sandoval",
+  "name": "Sandoval",
+  "role": "rival Lancer",
+  "cell": [256, 320],
+  "idle": { "files": ["1.png", "2.png", "3.png", "4.png", "5.png", "6.png", "7.png", "8.png"], "fps": 8 },
+  "atk": { "files": ["atk-1.png", "atk-2.png", "atk-3.png", "atk-4.png", "atk-5.png", "atk-6.png"], "fps": 10 },
+  "atkLeft": { "files": ["atk-left-1.png", "atk-left-2.png", "atk-left-3.png", "atk-left-4.png", "atk-left-5.png", "atk-left-6.png"], "fps": 10 },
+  "move": { "files": ["move-1.png", "move-2.png", "move-3.png", "move-4.png", "move-5.png", "move-6.png"], "fps": 9 },
+  "moveLeft": { "files": ["move-left-1.png", "move-left-2.png", "move-left-3.png", "move-left-4.png", "move-left-5.png", "move-left-6.png"], "fps": 9 },
+  "portrait": "engine/portrait.jpg",
+  "note": "Idle is 8 frames (not 12) so cells do not clip neighbors. Harvested from in-place video for board breathing/cloak/spear motion."
+}

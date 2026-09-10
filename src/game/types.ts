@@ -59,6 +59,8 @@ export type ClassId =
   | "assassin"
   | "rogue"
   | "lancer"
+  | "sandoval"
+  | "kaelFinal"
   | "conjurer"
   | "paladin"
   | "heavyKnight"
@@ -77,7 +79,7 @@ export type ClassId =
   // computed live from its summoner (see castSummonFamiliar), CLASSES.familiar only
   // supplies a sprite/size/range fallback and satisfies the ClassId-keyed tables below.
   | "familiar";
-export type SpriteId = "kael" | "nira" | "voss" | "salazar" | "malrec" | "aldric" | "defaultLancer" | "soldier" | "brigand" | "captain" | "sorcerer" | "horror" | "Asherah" | "pikeman" | "wardog" | "troll" | "morvenian-wolf" | "butcher" | "birolho" | "familiar" | "swamp-blue-calf" | "ancient-golem" | "lancer" | "conjurer";
+export type SpriteId = "kael" | "nira" | "voss" | "salazar" | "malrec" | "aldric" | "defaultLancer" | "soldier" | "brigand" | "captain" | "sorcerer" | "horror" | "Asherah" | "pikeman" | "wardog" | "troll" | "morvenian-wolf" | "butcher" | "birolho" | "familiar" | "swamp-blue-calf" | "ancient-golem" | "lancer" | "sandoval" | "kaelFinal" | "conjurer";
 export type HealId = "cureMinor" | "cureWounds" | "cureLight";
 export type SpellKind =
   | "fireball"
@@ -153,6 +155,8 @@ export interface ClassDef {
   footprintOffsets?: { dx: number; dy: number }[];
   /** Turn-order priority: lower acts first. Only set for player classes so far. */
   init?: number;
+  /** Marks this class as a named boss: boss objectives recognize it and the battle renders its chief marker. */
+  boss?: true;
   /** Marks a class as a summon rather than a member of the cast: conjured into a battle by
    * a spell (the Familiar by the Conjurer's tier 1), gone when it ends, and outside the
    * party's defeat check — losing every summon on the board never loses the mission. It is

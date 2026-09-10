@@ -1,4 +1,4 @@
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, isBossClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
 import type { SpellTier } from "./data";
 import { canCounter, makeForecast, mulberry32, powerOf, protOf, rollDamage, rollDamageCustom } from "./combat";
 import {
@@ -1347,7 +1347,7 @@ export class BattleEngine {
    * the historical "facing = 1 shows the sheet as drawn" convention. */
   private faceSpriteToward(id: string, x: number): void {
     const u = this.units.find((n) => n.id === id);
-    if (!u || (u.sprite !== "malrec" && u.sprite !== "aldric" && u.sprite !== "defaultLancer" && u.sprite !== "lancer" && u.sprite !== "conjurer")) return;
+    if (!u || (u.sprite !== "malrec" && u.sprite !== "aldric" && u.sprite !== "defaultLancer" && u.sprite !== "lancer" && u.sprite !== "sandoval" && u.sprite !== "conjurer")) return;
     if (x > u.x) u.facing = 1;
     else if (x < u.x) u.facing = -1;
   }
@@ -2427,7 +2427,7 @@ export class BattleEngine {
   /** True only for bow/crossbow users. Reach weapons strike physically instead of firing arrows. */
   private isArrowAttack(unit: Unit): boolean {
     // Reach weapons are always physical, even if an imported loadout is incorrectly flagged ranged.
-    if (unit.classId === "pikeman" || unit.classId === "lancer" || unit.classId === "sentinel" || unit.classId === "templar") return false;
+    if (unit.classId === "pikeman" || unit.classId === "lancer" || unit.classId === "sandoval" || unit.classId === "sentinel" || unit.classId === "templar") return false;
     if (unit.weaponId) return !!WEAPONS[unit.weaponId]?.ranged;
     // Default campaign loadouts: Neera and brigands start as bow/crossbow users before gear is assigned.
     return unit.classId === "archer" || unit.classId === "ranger" || unit.classId === "assassin" || unit.classId === "brigand";
@@ -2576,7 +2576,7 @@ export class BattleEngine {
   private evaluateEnd(): void {
     if (this.result) return;
     const p = this.units.some((u) => u.side === "player" && u.alive && !u.summoned);
-    const bossAlive = this.units.some((u) => u.side === "enemy" && u.alive && u.classId === "captain");
+    const bossAlive = this.units.some((u) => u.side === "enemy" && u.alive && isBossClass(u.classId));
     const anyEnemy = this.units.some((u) => u.side === "enemy" && u.alive);
     const won = this.mission.win === "boss" ? !bossAlive : !anyEnemy;
     // Victory doesn't end the battle by itself anymore — it just makes ending it an option
@@ -5496,7 +5496,7 @@ export class BattleEngine {
         ? 2.0
         : u.sprite === "kael" || u.classId === "mage" || u.classId === "cultist" || u.classId === "healer"
           ? 1.7
-          : u.classId === "captain"
+          : isBossClass(u.classId)
             ? 1.75
             : 1.85;
     // Conjurer sheets are intentionally 10% slower without slowing its turn or spell logic.
@@ -5587,7 +5587,7 @@ export class BattleEngine {
       };
     }
     const heavy = u.size >= 4 ? 1.4 : u.size === 2 ? 1.12 : 1;
-    if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "conjurer" || u.size >= 4) {
+    if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval" || u.sprite === "conjurer" || u.size >= 4) {
       return { bob: 0, sway: 0, breath: 0 };
     }
     const bob = Math.sin(t * 1.55) * (1.15 * heavy);
@@ -5968,7 +5968,7 @@ export class BattleEngine {
     for (const u of sorted) {
       if (u.fade <= 0) continue;
       const s = unitSize(u);
-      const boss = u.classId === "captain";
+      const boss = isBossClass(u.classId);
       const { cx: px, cy: py } = this.unitPixel(u);
       const foot = s >= 4 ? 2.15 : s === 2 ? 1.5 : boss ? 1.12 : 1;
       const { bob, sway, breath } = this.liveMotion(u, cell);
@@ -6013,7 +6013,7 @@ export class BattleEngine {
       const isBigCreatureFootprint = u.footprintOffsets === FOOTPRINT_TYPE_8 || u.footprintOffsets === FOOTPRINT_TYPE_7;
       // Keep these display adjustments tied to the unit class as well as the asset id.
       // This makes them survive saved scenarios that still carry an older sprite id.
-      const isLancer = u.classId === "lancer" || u.sprite === "lancer";
+      const isLancer = u.classId === "lancer" || u.classId === "sandoval" || u.sprite === "lancer" || u.sprite === "sandoval";
       const isFamiliar = u.classId === "familiar" || u.sprite === "familiar";
       // The preserved Lancer sheet is slightly tighter than the other humanoid cuts.
       // Its feet remain anchored while the figure is 10% larger; the summoned Familiar
@@ -6028,9 +6028,9 @@ export class BattleEngine {
       ctx.translate(px + sway, py + footY + bob);
       // Dedicated left/right walk+attack cuts already face the enemy, so flipping
       // them would put the spear/staff on the wrong side. Idle still flips.
-      const dirAction = (u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer") && (atk != null || moving);
+      const dirAction = (u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval") && (atk != null || moving);
       const flip = dirAction ? 1 : u.facing;
-      if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "conjurer") ctx.scale(flip, 1);
+      if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval" || u.sprite === "conjurer") ctx.scale(flip, 1);
       else ctx.scale(flip * (1 - breath * 0.22), 1 + breath);
       if (u.levelGlow > 0) {
         const pulse = 0.75 + Math.sin(this.time * 7) * 0.25;

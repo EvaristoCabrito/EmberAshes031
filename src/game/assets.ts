@@ -56,7 +56,7 @@ export function tileVariantSrc(id: TerrainId, variant: number): string {
   return `/game/tiles/${tileVariantName(id, variant)}.png?v=55`;
 }
 const TILES = Object.keys(TILE_VARIANT_COUNT) as TerrainId[];
-const SPRITES: SpriteId[] = ["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "soldier", "brigand", "captain", "sorcerer", "horror", "Asherah", "pikeman", "wardog", "troll", "morvenian-wolf", "butcher", "birolho", "familiar", "swamp-blue-calf", "ancient-golem", "lancer", "conjurer"];
+const SPRITES: SpriteId[] = ["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "soldier", "brigand", "captain", "sorcerer", "horror", "Asherah", "pikeman", "wardog", "troll", "morvenian-wolf", "butcher", "birolho", "familiar", "swamp-blue-calf", "ancient-golem", "lancer", "sandoval", "kaelFinal", "conjurer"];
 
 const LOAD_POOL = 8;
 let loadActive = 0;
@@ -81,7 +81,7 @@ function releaseLoad(): void {
 
 function spriteFrameSrc(id: SpriteId, frame: string, cacheBust = ""): string {
   // Conjurer's active art is kept as a complete, source-preserved serial. Talk drives idle; the former Idle sheet drives casting.
-  const directory = id === "conjurer" ? "conjurer/conjurer-complete-003" : id;
+  const directory = id === "conjurer" ? "conjurer/conjurer-complete-003" : id === "sandoval" ? "sandoval/sandoval-complete-001" : id === "kaelFinal" ? "Kael_Final/kael-final-002" : id;
   return `/game/sprites/${directory}/${frame}.png${cacheBust}`;
 }
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -116,7 +116,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 // big horrors, and the two creatures cut from reference video (familiar, ancient golem).
 // loadGameArt rejects on any missing file, so this set and what is on disk have to move
 // together.
-const HERO_IDLE = new Set<SpriteId>(["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "horror", "Asherah", "familiar", "ancient-golem", "lancer", "conjurer"]);
+const HERO_IDLE = new Set<SpriteId>(["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "horror", "Asherah", "familiar", "ancient-golem", "lancer", "sandoval", "kaelFinal", "conjurer"]);
 
 export async function loadGameArt(): Promise<GameArt> {
   const tiles = {} as Record<TerrainId, HTMLImageElement[]>;
@@ -136,8 +136,8 @@ export async function loadGameArt(): Promise<GameArt> {
   const attacks: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
   await Promise.all(
     SPRITES.map(async (id) => {
-      const n = id === "conjurer" ? 36 : HERO_IDLE.has(id) ? 12 : 4;
-      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" || id === "defaultLancer" ? "?v=sheet2" : id === "lancer" ? "?v=3" : id === "conjurer" ? "?v=conjurer-complete-003" : "";
+      const n = id === "conjurer" || id === "kaelFinal" ? 36 : id === "sandoval" ? 8 : HERO_IDLE.has(id) ? 12 : 4;
+      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" || id === "defaultLancer" ? "?v=sheet2" : id === "lancer" ? "?v=3" : id === "sandoval" ? "?v=sandoval-complete-001" : id === "kaelFinal" ? "?v=kael-final-002" : id === "conjurer" ? "?v=conjurer-complete-003" : "";
       sprites[id] = await Promise.all(
         Array.from({ length: n }, (_, i) =>
           loadImage(spriteFrameSrc(id, id === "conjurer" ? `talk-${i + 1}` : `${i + 1}`, cacheBust)),
@@ -162,6 +162,8 @@ export async function loadGameArt(): Promise<GameArt> {
     birolho: { n: 4, bust: "" },
     butcher: { n: 4, bust: "" },
     lancer: { n: 6, bust: "?v=3" },
+    sandoval: { n: 6, bust: "?v=sandoval-complete-001" },
+    kaelFinal: { n: 36, bust: "?v=kael-final-002" },
     conjurer: { n: 36, bust: "?v=conjurer-complete-003" },
   };
   await Promise.all(
@@ -194,6 +196,9 @@ export async function loadGameArt(): Promise<GameArt> {
     aldric: { n: 6, bust: "?v=sheet2" },
     defaultLancer: { n: 6, bust: "?v=sheet2" },
     lancer: { n: 6, bust: "?v=3" },
+    sandoval: { n: 6, bust: "?v=sandoval-complete-001" },
+    // One authored right-facing walk. The renderer mirrors it for left-facing movement.
+    kaelFinal: { n: 36, bust: "?v=kael-final-002" },
     conjurer: { n: 36, bust: "?v=conjurer-complete-003" },
   };
   const walks: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
@@ -205,14 +210,14 @@ export async function loadGameArt(): Promise<GameArt> {
   );
   const walksLeft: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
   const attacksLeft: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
-  const DIR_LEFT: SpriteId[] = ["malrec", "aldric", "defaultLancer", "lancer"];
+  const DIR_LEFT: SpriteId[] = ["malrec", "aldric", "defaultLancer", "lancer", "sandoval"];
   await Promise.all(
     DIR_LEFT.map(async (id) => {
       const walkN = WALK_FRAMES[id]?.n ?? 6;
       const atkN = ATTACK_FRAMES[id]?.n ?? 5;
-      const bust = id === "lancer" ? "?v=3" : "?v=sheet2";
-      walksLeft[id] = await Promise.all(Array.from({ length: walkN }, (_, i) => loadImage(`/game/sprites/${id}/move-left-${i + 1}.png${bust}`)));
-      attacksLeft[id] = await Promise.all(Array.from({ length: atkN }, (_, i) => loadImage(`/game/sprites/${id}/atk-left-${i + 1}.png${bust}`)));
+      const bust = id === "lancer" ? "?v=3" : id === "sandoval" ? "?v=sandoval-complete-001" : "?v=sheet2";
+      walksLeft[id] = await Promise.all(Array.from({ length: walkN }, (_, i) => loadImage(spriteFrameSrc(id, `move-left-${i + 1}`, bust))));
+      attacksLeft[id] = await Promise.all(Array.from({ length: atkN }, (_, i) => loadImage(spriteFrameSrc(id, `atk-left-${i + 1}`, bust))));
     }),
   );
   const impact = await Promise.all([1, 2, 3, 4].map((n) => loadImage(`/game/fx/impact-${n}.png`)));
