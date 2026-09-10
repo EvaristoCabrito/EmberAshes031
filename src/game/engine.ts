@@ -1806,7 +1806,10 @@ export class BattleEngine {
       if (!this.reducedMotion) this.trauma = Math.min(1, this.trauma + (a.spellKind === "lightningTier3" ? 0.95 : a.spellKind === "lightning" ? 0.72 : 0.45));
 
     }
-    if (a.t >= 0.55) this.finishCombat(att);
+    // The Conjurer has a 36-frame casting sheet. Let it finish its visual motion without
+    // changing the hit timing above; every other spell keeps the existing duration.
+    const spellEnd = att.sprite === "conjurer" ? 0.72 : 0.55;
+    if (a.t >= spellEnd) this.finishCombat(att);
   }
 
   private stepHeal(a: HealAnim, dt: number): void {
@@ -3831,8 +3834,10 @@ export class BattleEngine {
       frame: 0,
     });
     this.tip = `${unit.name} invocou ${familiar.name}.`;
-    sfxPlay.spell();
-    this.finishAction(unit);
+    // Unlike the original instant summon, route the completed summon through the same
+    // queued spell action that Birolho uses. The familiar remains exactly the same;
+    // this only gives its caster the authored casting sequence before the turn ends.
+    this.queue.push({ type: "spell", att: unit.id, tiles: [cell], ids: [], label: SUMMON_FAMILIAR.name, spellKind: "summonFamiliar" });
   }
 
   private castWebOfDreams(unit: Unit, click: Point): void {
@@ -3870,8 +3875,9 @@ export class BattleEngine {
     });
     this.tip = `${unit.name} conjurou ${WEB_OF_DREAMS.name}${asleepCount > 0 ? ` — ${asleepCount} adormeceu(ram)` : ""}.`;
     this.pushLog(`${unit.name} conjura ${WEB_OF_DREAMS.name}.`);
-    sfxPlay.spell();
-    this.finishAction(unit);
+    // Web of Dreams is a zone spell with no damage targets, but it still needs the
+    // Conjurer's cast motion before the action is completed.
+    this.queue.push({ type: "spell", att: unit.id, tiles: [click], ids: [], label: WEB_OF_DREAMS.name, spellKind: "webOfDreams" });
   }
 
   private castCleave(unit: Unit, cell: Point): void {
@@ -5471,7 +5477,7 @@ export class BattleEngine {
     if (n <= 1 || !a || a.type !== "move" || a.id !== u.id) return 0;
     const dur = this.speedMode === "fast" ? 0.12 : 0.22;
     const steps = a.i + Math.min(1, a.t / dur);
-    return Math.floor(steps * (n / 2)) % n;
+    return Math.floor(steps * (n / 2) * (u.sprite === "conjurer" ? 0.9 : 1)) % n;
   }
 
   private idleFrame(u: Unit, n: number): number {
@@ -5493,10 +5499,12 @@ export class BattleEngine {
           : u.classId === "captain"
             ? 1.75
             : 1.85;
-    const rate = base * (moving ? 2.2 : 1);
+    // Conjurer sheets are intentionally 10% slower without slowing its turn or spell logic.
+    const animationRate = u.sprite === "conjurer" ? 0.9 : 1;
+    const rate = base * (moving ? 2.2 : 1) * animationRate;
     if (moving || this.reducedMotion) return Math.floor(u.bob * rate) % n;
     const cycle = Math.max(2, n * 2 - 2);
-    const pace = cycle / 2.6;
+    const pace = (cycle / 2.6) * animationRate;
     const x = Math.floor(u.bob * pace) % cycle;
     return x < n ? x : cycle - x;
   }
@@ -5504,6 +5512,8 @@ export class BattleEngine {
   private attackPose(u: Unit): number | null {
     const a = this.active;
     if (!a) return null;
+    // Visual-only pacing: the Conjurer holds each authored pose 10% longer.
+    const animationT = a.t * (u.sprite === "conjurer" ? 0.9 : 1);
     // A dedicated cast pose (currently just Birolho's cast-*.png), for a spell or heal only —
     // falls back to the melee attacks cut for every sprite without one, same as before this
     // existed. Checked first so a caster with both never mixes an index meant for one pool's
@@ -5513,12 +5523,15 @@ export class BattleEngine {
       if (!castFrames || castFrames.length < 3) return null;
       const n = castFrames.length;
       if (n === 4) {
-        if (a.t < 0.12) return 0;
-        if (a.t < 0.22) return 1;
-        if (a.t < 0.4) return 2;
+        if (animationT < 0.12) return 0;
+        if (animationT < 0.22) return 1;
+        if (animationT < 0.4) return 2;
         return 3;
       }
-      return Math.min(n - 1, Math.floor(Math.min(0.99, a.t / 0.4) * n));
+      // The Conjurer's authored 36-frame casting sequence needs a readable lead-in;
+      // other casters retain the established timing.
+      const castDuration = u.sprite === "conjurer" ? 0.65 : 0.4;
+      return Math.min(n - 1, Math.floor(Math.min(0.99, animationT / castDuration) * n));
     }
     const frames = this.art.attacks[u.sprite];
     if (!frames || frames.length < 4) return null;
@@ -5529,10 +5542,17 @@ export class BattleEngine {
       const actor = counter ? a.def : a.att;
       if (u.id !== actor) return null;
       if (long) {
-        if (a.stage === "lunge" || a.stage === "counterLunge") return Math.min(5, Math.floor((a.t / 0.2) * 6));
-        if (a.stage === "hit" || a.stage === "counterHit") return Math.min(8, 6 + Math.floor((a.t / 0.18) * 3));
-        if (a.stage === "recover" || a.stage === "counterRecover") return Math.min(11, 9 + Math.floor((a.t / 0.16) * 3));
-        return 11;
+        // Long authored sheets use the whole motion: half for the wind-up, then a quarter
+        // for impact and a quarter for recovery. This keeps legacy 12-frame cuts identical
+        // while allowing the Conjurer's 36-frame cast/attack to play in full.
+        const lungeN = Math.max(2, Math.round(n * 0.5));
+        const hitN = Math.max(2, Math.round(n * 0.25));
+        const hitStart = lungeN;
+        const recoverStart = Math.min(n - 1, hitStart + hitN);
+        if (a.stage === "lunge" || a.stage === "counterLunge") return Math.min(lungeN - 1, Math.floor((animationT / 0.2) * lungeN));
+        if (a.stage === "hit" || a.stage === "counterHit") return Math.min(recoverStart - 1, hitStart + Math.floor((animationT / 0.18) * hitN));
+        if (a.stage === "recover" || a.stage === "counterRecover") return Math.min(n - 1, recoverStart + Math.floor((animationT / 0.16) * (n - recoverStart)));
+        return n - 1;
       }
       // Short sets: the classic cut is one frame per stage (0-1 lunge, 2 hit, 3 recover).
       // Anything between 5 and 11 frames — the familiar's 8 — walks the same three stages
@@ -5541,9 +5561,9 @@ export class BattleEngine {
       const hitEnd = Math.max(lungeEnd + 1, Math.round((n - 1) * 0.6));
       const span = (from: number, to: number, prog: number) =>
         Math.min(to, from + Math.floor(Math.max(0, Math.min(0.999, prog)) * (to - from + 1)));
-      if (a.stage === "lunge" || a.stage === "counterLunge") return span(0, lungeEnd, a.t / 0.2);
-      if (a.stage === "hit" || a.stage === "counterHit") return span(lungeEnd + 1, hitEnd, a.t / 0.18);
-      if (a.stage === "recover" || a.stage === "counterRecover") return span(hitEnd + 1, n - 1, a.t / 0.16);
+      if (a.stage === "lunge" || a.stage === "counterLunge") return span(0, lungeEnd, animationT / 0.2);
+      if (a.stage === "hit" || a.stage === "counterHit") return span(lungeEnd + 1, hitEnd, animationT / 0.18);
+      if (a.stage === "recover" || a.stage === "counterRecover") return span(hitEnd + 1, n - 1, animationT / 0.16);
       return n - 1;
     }
     return null;
@@ -5991,8 +6011,16 @@ export class BattleEngine {
       // Depends on that creature's own sprite frames being cropped to roughly the same
       // canvas-fill ratio as the others — this correction assumes that, it doesn't measure it.
       const isBigCreatureFootprint = u.footprintOffsets === FOOTPRINT_TYPE_8 || u.footprintOffsets === FOOTPRINT_TYPE_7;
-      const h = cell * (s >= 4 ? 3.35 : s === 2 ? 1.72 : boss ? 1.44 : 1.42) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1);
-      const w = cell * (s >= 4 ? 2.85 : s === 2 ? 1.85 : boss ? 1.12 : 1.11) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1);
+      // Keep these display adjustments tied to the unit class as well as the asset id.
+      // This makes them survive saved scenarios that still carry an older sprite id.
+      const isLancer = u.classId === "lancer" || u.sprite === "lancer";
+      const isFamiliar = u.classId === "familiar" || u.sprite === "familiar";
+      // The preserved Lancer sheet is slightly tighter than the other humanoid cuts.
+      // Its feet remain anchored while the figure is 10% larger; the summoned Familiar
+      // intentionally occupies half the normal visual footprint.
+      const spriteScale = isLancer ? 1.1 : isFamiliar ? 0.5 : 1;
+      const h = cell * (s >= 4 ? 3.35 : s === 2 ? 1.72 : boss ? 1.44 : 1.42) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1) * spriteScale;
+      const w = cell * (s >= 4 ? 2.85 : s === 2 ? 1.85 : boss ? 1.12 : 1.11) * 1.2 * (isBigCreatureFootprint ? 0.75 : 1) * spriteScale;
       // Big creatures plant their feet at the bottom corner of their front hex (tile * 0.9,
       // matching the hex outline radius used elsewhere) instead of the smaller offset tuned
       // for normal-size sprites, so the feet don't float above the tile they stand on.

@@ -79,6 +79,11 @@ function releaseLoad(): void {
   if (next) next();
 }
 
+function spriteFrameSrc(id: SpriteId, frame: string, cacheBust = ""): string {
+  // Conjurer's active art is kept as a complete, source-preserved serial. Talk drives idle; the former Idle sheet drives casting.
+  const directory = id === "conjurer" ? "conjurer/conjurer-complete-003" : id;
+  return `/game/sprites/${directory}/${frame}.png${cacheBust}`;
+}
 function loadImage(src: string): Promise<HTMLImageElement> {
   return acquireLoad().then(
     () =>
@@ -131,9 +136,13 @@ export async function loadGameArt(): Promise<GameArt> {
   const attacks: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
   await Promise.all(
     SPRITES.map(async (id) => {
-      const n = HERO_IDLE.has(id) ? 12 : 4;
-      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" || id === "defaultLancer" ? "?v=sheet2" : id === "lancer" ? "?v=3" : id === "conjurer" ? "?v=5" : "";
-      sprites[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(`/game/sprites/${id}/${i + 1}.png${cacheBust}`)));
+      const n = id === "conjurer" ? 36 : HERO_IDLE.has(id) ? 12 : 4;
+      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" || id === "defaultLancer" ? "?v=sheet2" : id === "lancer" ? "?v=3" : id === "conjurer" ? "?v=conjurer-complete-003" : "";
+      sprites[id] = await Promise.all(
+        Array.from({ length: n }, (_, i) =>
+          loadImage(spriteFrameSrc(id, id === "conjurer" ? `talk-${i + 1}` : `${i + 1}`, cacheBust)),
+        ),
+      );
     }),
   );
   // Attack cuts, per sprite: how many atk-*.png frames are on disk, and the cache-bust the
@@ -153,12 +162,12 @@ export async function loadGameArt(): Promise<GameArt> {
     birolho: { n: 4, bust: "" },
     butcher: { n: 4, bust: "" },
     lancer: { n: 6, bust: "?v=3" },
-    conjurer: { n: 4, bust: "?v=5" },
+    conjurer: { n: 36, bust: "?v=conjurer-complete-003" },
   };
   await Promise.all(
     (Object.keys(ATTACK_FRAMES) as SpriteId[]).map(async (id) => {
       const { n, bust } = ATTACK_FRAMES[id]!;
-      attacks[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(`/game/sprites/${id}/atk-${i + 1}.png${bust}`)));
+      attacks[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(spriteFrameSrc(id, `atk-${i + 1}`, bust))));
     }),
   );
   // Cast pose: cast-*.png, same shape as the attack table — a sprite absent from here falls
@@ -166,12 +175,14 @@ export async function loadGameArt(): Promise<GameArt> {
   // existed.
   const CAST_FRAMES: Partial<Record<SpriteId, { n: number; bust: string }>> = {
     birolho: { n: 3, bust: "" },
+    // The spell cast intentionally uses the former Idle sheet; ATT remains the physical attack.
+    conjurer: { n: 36, bust: "?v=conjurer-complete-003" },
   };
   const casts: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
   await Promise.all(
     (Object.keys(CAST_FRAMES) as SpriteId[]).map(async (id) => {
       const { n, bust } = CAST_FRAMES[id]!;
-      casts[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(`/game/sprites/${id}/cast-${i + 1}.png${bust}`)));
+      casts[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(spriteFrameSrc(id, id === "conjurer" ? `${i + 1}` : `cast-${i + 1}`, bust))));
     }),
   );
   // Walk cycles: move-*.png, same shape as the attack table. A sprite absent from here has
@@ -183,12 +194,13 @@ export async function loadGameArt(): Promise<GameArt> {
     aldric: { n: 6, bust: "?v=sheet2" },
     defaultLancer: { n: 6, bust: "?v=sheet2" },
     lancer: { n: 6, bust: "?v=3" },
+    conjurer: { n: 36, bust: "?v=conjurer-complete-003" },
   };
   const walks: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
   await Promise.all(
     (Object.keys(WALK_FRAMES) as SpriteId[]).map(async (id) => {
       const { n, bust } = WALK_FRAMES[id]!;
-      walks[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(`/game/sprites/${id}/move-${i + 1}.png${bust}`)));
+      walks[id] = await Promise.all(Array.from({ length: n }, (_, i) => loadImage(spriteFrameSrc(id, `move-${i + 1}`, bust))));
     }),
   );
   const walksLeft: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
