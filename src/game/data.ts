@@ -643,7 +643,7 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     mov: 5,
     minRange: 1,
     maxRange: 2,
-    sprite: "aldric",
+    sprite: "lancer",
     size: 1,
     init: 4,
   },
@@ -662,7 +662,7 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     mov: 5,
     minRange: 1,
     maxRange: 2,
-    sprite: "malrec",
+    sprite: "conjurer",
     size: 1,
     init: 6,
   },
@@ -1722,7 +1722,7 @@ export const CAUSTIC_VENOM = {
   // hit poisons its target: 1D4 at the start of each of their own turns until cured by
   // Cure Disease or the disease potion (see startOfTurnEffects/curePlayerDisease).
   size: 3,
-  range: 4,
+  range: 6,
   centerDice: 1,
   centerFaces: 10,
   centerBonus: 0,
@@ -1779,11 +1779,13 @@ export const PIERCING_THRUST = {
   armorIgnore: 0.2,
 };
 
-/** Lancer tier 2: an instant, unaimed swing that hits every enemy on an adjacent hex for
- * plain weapon damage and shoves each one back a hex to reopen reach. */
+/** Lancer tier 2: a self-centered AoE that hits every enemy within `radius` hexes for
+ * plain weapon damage and shoves each one back a hex to reopen reach. Aimed by previewing
+ * the area, then confirming — not an instant adjacent-only swing. */
 export const SWEEP = {
   name: "Varredura",
   knockback: 1,
+  radius: 2,
 };
 
 /** Lancer tier 3: a single-target hook-the-legs strike — weapon damage + 1D8, stuns for 2 of
@@ -1995,7 +1997,8 @@ export function magicMissileCount(level: number): number {
  * and Lightning they're spawned with per battle, spent one at a time by runAiFor's cultist
  * branch (unlike a player caster, each cast is a single missile at a single target, never the
  * player's own click-N-targets spread). Level 1-3: one Magic Missile cast; level 4-6: two;
- * level 7+: three. Lightning joins on top at level 10, one cast. */
+ * level 7+: three. Lightning joins on top at level 10, one cast. Choque is tracked separately
+ * on Unit.shockCharges (see shockChargesFor) so it doesn't steal a player-facing tier. */
 export function cultistSpellUses(level: number): { magicMissile: number; lightning: number } {
   return {
     magicMissile: level >= 7 ? 3 : level >= 4 ? 2 : 1,
@@ -2044,7 +2047,7 @@ export const SUMMON_FAMILIAR = {
  * "difficult terrain / restrained" part of the spell, folded into one mechanic. */
 export const WEB_OF_DREAMS = {
   name: "Teia dos Sonhos",
-  range: 5,
+  range: 6,
   size: 1,
   durationRounds: 3,
   sleepChance: 0.25,
@@ -2052,6 +2055,13 @@ export const WEB_OF_DREAMS = {
   sleepFaces: 4,
   sleepBonusDamage: 0.25,
 };
+
+/** Web of Dreams' splash radius grows at later levels: 1 hex at unlock, +1 at 7, +1 at 12. */
+export function webOfDreamsSize(level: number): number {
+  if (level >= 12) return WEB_OF_DREAMS.size + 2;
+  if (level >= 7) return WEB_OF_DREAMS.size + 1;
+  return WEB_OF_DREAMS.size;
+}
 
 export const LIGHTNING = {
   name: "Relâmpago",
@@ -2064,6 +2074,54 @@ export const LIGHTNING = {
   echoFaces: 12,
   echoBonus: 2,
 };
+
+/** Elementalist T5 thunderbolt — Relâmpago3. Bigger than Relâmpago on every lever. */
+export const LIGHTNING_T3 = {
+  name: "Relâmpago3",
+  range: 6,
+  dice: 3,
+  faces: 12,
+  bonus: 8,
+  mul: 3.0,
+  echoDice: 2,
+  echoFaces: 12,
+  echoBonus: 8,
+};
+
+/** Enemy-only weaker Relâmpago: about 1/3 the damage stats, same range, same echo shape.
+ * Current bolt FX is this spell; Relâmpago itself now uses a heavier sky-strike. */
+export const SHOCK = {
+  name: "Choque",
+  range: 4,
+  dice: 1,
+  faces: 6,
+  bonus: 0,
+  mul: 0.67,
+  echoDice: 1,
+  echoFaces: 4,
+  echoBonus: 0,
+};
+
+const ENEMY_MAGE_IDS: ReadonlySet<ClassId> = new Set([
+  "cultist",
+  "mage",
+  "elementalist",
+  "warlock",
+  "sorcerer",
+  "necromancer",
+  "birolho",
+]);
+
+export function isEnemyMageClass(id: ClassId): boolean {
+  return ENEMY_MAGE_IDS.has(id);
+}
+
+/** Choque charges spawned on an enemy mage. Birolho gets 3; every other mage gets 2. */
+export function shockChargesFor(classId: ClassId): number {
+  if (classId === "birolho") return 3;
+  if (isEnemyMageClass(classId)) return 2;
+  return 0;
+}
 
 export const DISEASE = {
   biteChance: 0.2,
@@ -2089,6 +2147,14 @@ export function spellFormula(mag: number, mul: number, dice: number, faces: numb
 
 export function lightningFormula(mag: number): string {
   return spellFormula(mag, LIGHTNING.mul, lightningDice(), LIGHTNING.faces, LIGHTNING.bonus);
+}
+
+export function lightningTier3Formula(mag: number): string {
+  return spellFormula(mag, LIGHTNING_T3.mul, LIGHTNING_T3.dice, LIGHTNING_T3.faces, LIGHTNING_T3.bonus);
+}
+
+export function shockFormula(mag: number): string {
+  return spellFormula(mag, SHOCK.mul, SHOCK.dice, SHOCK.faces, SHOCK.bonus);
 }
 
 /** Fireball's dice no longer climb with level. They used to (6d6+10 by level 9) because the
@@ -2315,6 +2381,7 @@ export const SPELL_TIER: Partial<Record<SpellKind, SpellTier>> = {
   summonFamiliar: 1,
   webOfDreams: 2,
   fireball: 3,
+  lightningTier3: 5,
   cureDisease: 3,
   causticVenom: 4,
   multiShot: 3,
@@ -2507,6 +2574,8 @@ const RAW_MISSIONS: Mission[] = [
       { name: "Kael", classId: "swordsman", x: 2, y: 6 },
       { name: "Neera", classId: "archer", x: 3, y: 6 },
       { name: "Voss", classId: "mage", x: 4, y: 6 },
+      { name: "Aldric", classId: "lancer", x: 1, y: 6 },
+      { name: "Malrec", classId: "conjurer", x: 5, y: 6 },
     ],
     enemySpawns: [
       { name: "Soldado", classId: "soldier", x: 1, y: 0 },

@@ -27,6 +27,7 @@ export function BattleCanvas({
     if (!canvas || !wrap) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    (window as Window & { __emberEngine?: BattleEngine }).__emberEngine = engine;
 
     let raf = 0;
     let last = performance.now();
@@ -337,6 +338,8 @@ export function BattleCanvas({
       canvas.removeEventListener("contextmenu", onMenu);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
+      const w = window as Window & { __emberEngine?: BattleEngine };
+      if (w.__emberEngine === engine) delete w.__emberEngine;
     };
   }, [engine, onHud, paused]);
 

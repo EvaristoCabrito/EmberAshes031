@@ -1,4 +1,4 @@
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, lightningDice, lightningFormula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
 import type { SpellTier } from "./data";
 import { canCounter, makeForecast, mulberry32, powerOf, protOf, rollDamage, rollDamageCustom } from "./combat";
 import {
@@ -8,9 +8,7 @@ import {
   computeReachable,
   computeThreat,
   cleaveHexes,
-  cubeAdd,
   cubeRound,
-  cubeToOddr,
   footprint,
   footprintFrontRow,
   hexNeighbors,
@@ -21,7 +19,6 @@ import {
   manhattan,
   occupancy,
   occupies,
-  oddrToCube,
   piercingLine,
   shotKind,
   allAxisRays,
@@ -106,7 +103,7 @@ interface LevelUpSpark {
   text?: string;
 }
 
-const LEVEL_UP_FX_CAP = 44;
+const LEVEL_UP_FX_CAP = 72;
 
 function blankLevelUpSpark(): LevelUpSpark {
   return {
@@ -182,10 +179,14 @@ function blankMissileFx(): MissileFx {
 }
 
 /** How long the Lightning strike's flash lasts, start to fully faded — short and sudden on
- * purpose, a real strike rather than a travelling bolt. */
+ * purpose, a real strike rather than a travelling bolt. Choque keeps this; Relâmpago uses a
+ * longer, heavier sky-fall (see LightningFx.power). */
 const LIGHTNING_STRIKE_DUR = 0.42;
+const LIGHTNING_RAIO_DUR = 0.72;
+const LIGHTNING_T3_DUR = 0.92;
 /** How many hexes of "sky" the bolt is drawn falling from, above the struck hex. */
 const LIGHTNING_FALL_HEIGHT = 3.2;
+const LIGHTNING_RAIO_FALL_HEIGHT = 6.4;
 
 /** One fork off the main bolt — its own short jagged line, peeling away partway down. */
 interface LightningBranch {
@@ -211,12 +212,39 @@ interface LightningFx {
   hue: number;
   segs: number[];
   branches: LightningBranch[];
+  /** "shock" is Choque. "raio" is Relâmpago. "t3" is Lighting Tier 3 — viewport-tall strike. */
+  power: "shock" | "raio" | "t3";
 }
 
-const LIGHTNING_FX_CAP = 6;
+const LIGHTNING_FX_CAP = 16;
 
 function blankLightningFx(): LightningFx {
-  return { live: false, x: 0, y: 0, t: 0, max: LIGHTNING_STRIKE_DUR, hue: 205, segs: [], branches: [] };
+  return { live: false, x: 0, y: 0, t: 0, max: LIGHTNING_STRIKE_DUR, hue: 205, segs: [], branches: [], power: "shock" };
+}
+
+/** Divine light / potion burst sitting on a character. Independent of healGlow so the old
+ * Potionzero halo can still be fired on its own for a future skill. */
+type HolyKind = "minor" | "medium" | "disease" | "potion";
+interface HolyFx {
+  live: boolean;
+  unitId: string;
+  x: number;
+  y: number;
+  t: number;
+  max: number;
+  kind: HolyKind;
+  seed: number;
+  rays: number[];
+}
+const HOLY_FX_CAP = 10;
+function blankHolyFx(): HolyFx {
+  return { live: false, unitId: "", x: 0, y: 0, t: 0, max: 0.8, kind: "minor", seed: 0, rays: [] };
+}
+function holyDuration(kind: HolyKind): number {
+  if (kind === "medium") return 1.18;
+  if (kind === "disease") return 1.02;
+  if (kind === "potion") return 0.88;
+  return 0.7;
 }
 
 function blankParticle(): Particle {
@@ -484,6 +512,7 @@ function spawnUnit(spawn: Mission["playerSpawns"][number], side: Unit["side"], i
     flash: 0,
     levelGlow: 0,
     healGlow: 0,
+    healGlowKind: "potionZero",
     fade: 1,
     bob: 0,
     level,
@@ -528,6 +557,7 @@ function spawnUnit(spawn: Mission["playerSpawns"][number], side: Unit["side"], i
     footprintH: cls.footprintH,
     footprintOffsets: cls.footprintOffsets,
     shock: null,
+    shockCharges: side === "enemy" ? shockChargesFor(cls.id) : 0,
     diseased: false,
     diseaseBase: null,
     poisoned: false,
@@ -577,6 +607,7 @@ function unitFromSnap(snap: BattleUnitSnap): Unit {
     flash: 0,
     levelGlow: 0,
     healGlow: 0,
+    healGlowKind: "potionZero",
     fade: snap.fade,
     bob: 0,
     level: snap.level,
@@ -590,6 +621,7 @@ function unitFromSnap(snap: BattleUnitSnap): Unit {
     footprintH: cls?.footprintH,
     footprintOffsets: cls?.footprintOffsets,
     shock: snap.shock ? { ...snap.shock } : null,
+    shockCharges: snap.shockCharges ?? 0,
     diseased: snap.diseased,
     diseaseBase: snap.diseaseBase ? { ...snap.diseaseBase } : null,
     poisoned: snap.poisoned,
@@ -731,6 +763,8 @@ export class BattleEngine {
   private fireballBurstFxLive = 0;
   private lightningFx: LightningFx[] = Array.from({ length: LIGHTNING_FX_CAP }, blankLightningFx);
   private lightningFxLive = 0;
+  private holyFx: HolyFx[] = Array.from({ length: HOLY_FX_CAP }, blankHolyFx);
+  private holyFxLive = 0;
   private onNextIdle: (() => void) | null = null;
   private rng: () => number;
   private listeners = new Set<() => void>();
@@ -930,8 +964,7 @@ export class BattleEngine {
       spellReady:
         this.mode === "awaitSpell" &&
         !!selected &&
-        !!this.hover &&
-        this.spellAimValid(selected, this.hover),
+        (this.spellKind === "sweep" || (!!this.hover && this.spellAimValid(selected, this.hover))),
       spellKind: this.mode === "awaitSpell" ? this.spellKind : null,
       turnQueue: (() => {
         const active = this.activeTurnUnit();
@@ -1061,6 +1094,7 @@ export class BattleEngine {
         weaponId: u.weaponId,
         weaponEnh: u.weaponEnh,
         shock: u.shock ? { ...u.shock } : null,
+        shockCharges: u.shockCharges ?? 0,
         diseased: u.diseased,
         diseaseBase: u.diseaseBase ? { ...u.diseaseBase } : null,
         poisoned: u.poisoned,
@@ -1198,7 +1232,7 @@ export class BattleEngine {
     if (this.trauma > 0) this.trauma = Math.max(0, this.trauma - cap * 2.2);
     for (const u of this.units) {
       if (u.flash > 0) u.flash = Math.max(0, u.flash - cap * 4);
-      if (u.levelGlow > 0) u.levelGlow = Math.max(0, u.levelGlow - cap * 0.42);
+      if (u.levelGlow > 0) u.levelGlow = Math.max(0, u.levelGlow - cap * 0.18);
       if (u.healGlow > 0) u.healGlow = Math.max(0, u.healGlow - cap * 0.7);
       if (!u.alive && u.fade > 0) u.fade = Math.max(0, u.fade - cap * 2.4);
       if (u.alive) {
@@ -1276,6 +1310,19 @@ export class BattleEngine {
       }
       this.lightningFxLive = live;
     }
+    if (this.holyFxLive) {
+      let live = 0;
+      for (const h of this.holyFx) {
+        if (!h.live) continue;
+        h.t += cap;
+        if (h.t >= h.max) {
+          h.live = false;
+          continue;
+        }
+        live += 1;
+      }
+      this.holyFxLive = live;
+    }
     if (this.hitstop > 0) {
       this.hitstop -= cap;
       this.emit();
@@ -1300,7 +1347,7 @@ export class BattleEngine {
    * the historical "facing = 1 shows the sheet as drawn" convention. */
   private faceSpriteToward(id: string, x: number): void {
     const u = this.units.find((n) => n.id === id);
-    if (!u || (u.sprite !== "malrec" && u.sprite !== "aldric")) return;
+    if (!u || (u.sprite !== "malrec" && u.sprite !== "aldric" && u.sprite !== "lancer" && u.sprite !== "conjurer")) return;
     if (x > u.x) u.facing = 1;
     else if (x < u.x) u.facing = -1;
   }
@@ -1389,8 +1436,9 @@ export class BattleEngine {
         const target = step.tiles[step.tiles.length - 1];
         if (caster && target) this.emitMissileFx(caster.x, caster.y, target.x, target.y, "longShot");
       }
-      if (step.spellKind === "lightning") {
-        for (const t of step.tiles) this.emitLightningFx(t.x, t.y);
+      if (step.spellKind === "lightning" || step.spellKind === "lightningTier3" || step.spellKind === "shock") {
+        const power = step.spellKind === "lightningTier3" ? "t3" : step.spellKind === "lightning" ? "raio" : "shock";
+        for (const t of step.tiles) this.emitLightningFx(t.x, t.y, power);
       }
     } else if (step.type === "heal") {
       this.active = { type: "heal", att: step.att, def: step.def, kind: step.kind, t: 0, applied: false };
@@ -1755,7 +1803,7 @@ export class BattleEngine {
         }
       }
       if (a.spellKind === "fireball" || a.spellKind === "causticVenom") this.emitFireballBurstFx(a.tiles, a.spellKind);
-      if (!this.reducedMotion) this.trauma = Math.min(1, this.trauma + 0.45);
+      if (!this.reducedMotion) this.trauma = Math.min(1, this.trauma + (a.spellKind === "lightningTier3" ? 0.95 : a.spellKind === "lightning" ? 0.72 : 0.45));
 
     }
     if (a.t >= 0.55) this.finishCombat(att);
@@ -1790,7 +1838,7 @@ export class BattleEngine {
       });
       this.tip = `${CURES[a.kind].name} · +${gained} HP`;
       this.pushLog(`${att.name} curou ${target.name}: +${gained} HP`);
-      this.emitBeneficialGlow(target);
+      this.emitHolyFx(target.x, target.y, a.kind === "cureMinor" ? "minor" : "medium", target.id);
       sfxPlay.heal();
     }
     if (a.t >= 0.5) this.finishCombat(att);
@@ -1821,6 +1869,7 @@ export class BattleEngine {
         frame: 0,
       });
       this.tip = `${CURE_DISEASE.name} · ${target.name} está curado.`;
+      this.emitHolyFx(target.x, target.y, "disease", target.id);
       sfxPlay.heal();
     }
     if (a.t >= 0.5) this.finishCombat(att);
@@ -2241,36 +2290,41 @@ export class BattleEngine {
       if (!slot) return;
       Object.assign(slot, init, { live: true });
     };
-    spawn({
-      unitId: u.id,
-      kind: "ring",
-      dx: 0,
-      dy: -cell * 0.55,
-      vx: 0,
-      vy: 0,
-      life: 0,
-      max: 0.55,
-      size: 0,
-      hue: 46,
-      rot: 0,
-      vrot: 0,
-      refCell: cell,
-    });
-    const n = 18;
+    for (const [max, size] of [
+      [0.7, 0],
+      [0.95, 0],
+    ] as const) {
+      spawn({
+        unitId: u.id,
+        kind: "ring",
+        dx: 0,
+        dy: -cell * 0.55,
+        vx: 0,
+        vy: 0,
+        life: 0,
+        max,
+        size,
+        hue: 46,
+        rot: 0,
+        vrot: 0,
+        refCell: cell,
+      });
+    }
+    const n = 28;
     for (let i = 0; i < n; i++) {
       const angle = (Math.PI * 2 * i) / n + (this.rng() - 0.5) * 0.4;
-      const speed = cell * (0.9 + this.rng() * 1.1);
+      const speed = cell * (1.05 + this.rng() * 1.35);
       spawn({
         unitId: u.id,
         kind: "star",
         dx: 0,
         dy: -cell * 0.55,
         vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed * 0.7 - cell * 0.6,
+        vy: Math.sin(angle) * speed * 0.7 - cell * 0.75,
         life: 0,
-        max: 0.85 + this.rng() * 0.5,
-        size: cell * (0.05 + this.rng() * 0.05),
-        hue: 42 + this.rng() * 20,
+        max: 1.05 + this.rng() * 0.65,
+        size: cell * (0.06 + this.rng() * 0.07),
+        hue: 38 + this.rng() * 22,
         rot: this.rng() * Math.PI,
         vrot: (this.rng() - 0.5) * 6,
         refCell: cell,
@@ -2281,12 +2335,12 @@ export class BattleEngine {
       kind: "label",
       text: `NÍVEL ${level}!`,
       dx: 0,
-      dy: -cell * 1.35,
+      dy: -cell * 1.55,
       vx: 0,
-      vy: -cell * 0.18,
+      vy: -cell * 0.12,
       life: 0,
-      max: 2.2,
-      size: cell * 0.4,
+      max: 2.6,
+      size: cell * 0.52,
       hue: 46,
       rot: 0,
       vrot: 0,
@@ -2294,12 +2348,12 @@ export class BattleEngine {
     });
   }
 
-  /** A gentle light for a beneficial effect landing on a unit — a heal spell resolving or a
-   * potion being drunk — arming healGlow (see render()) plus a few soft pale motes drifting
-   * up off them. Deliberately smaller and quieter than emitLevelUpFx: this fires often
-   * (every heal, every potion), so it has to read as a light touch, not a fanfare. */
-  private emitBeneficialGlow(u: Unit): void {
+  /** Potionzero — the original warm-white halo + rising motes. Kept as its own FX so a
+   * future skill can fire it without sharing the new holy/potion bursts. Not used by
+   * current heals or potions. */
+  emitPotionZeroFx(u: Unit): void {
     u.healGlow = 1;
+    u.healGlowKind = "potionZero";
     if (this.reducedMotion) return;
     const n = 6;
     for (let i = 0; i < n; i++) {
@@ -2318,6 +2372,38 @@ export class BattleEngine {
         frame: 0,
       });
     }
+  }
+
+  /** Divine light on a hex (and optional unit). minor = Cura Menor, medium = Cura Média /
+   * Cura Leve, disease = Curar Doença (teal), potion = the nicer drink FX on the receiver. */
+  emitHolyFx(x: number, y: number, kind: HolyKind, unitId = ""): void {
+    const u = unitId ? this.units.find((n) => n.id === unitId) : this.units.find((n) => n.alive && n.x === x && n.y === y);
+    if (u) {
+      u.healGlow = kind === "minor" ? 0.72 : kind === "potion" ? 0.88 : 1;
+      u.healGlowKind = kind === "minor" ? "holyMinor" : kind === "medium" ? "holyMedium" : kind === "disease" ? "disease" : "potion";
+    }
+    if (this.reducedMotion) return;
+    let slot = this.holyFx.find((h) => !h.live);
+    if (!slot) {
+      slot = this.holyFx[0]!;
+      let oldest = 0;
+      for (const h of this.holyFx) {
+        if (h.t / h.max > oldest) {
+          oldest = h.t / h.max;
+          slot = h;
+        }
+      }
+    } else this.holyFxLive += 1;
+    const rayCount = kind === "medium" ? 10 : kind === "disease" ? 8 : kind === "potion" ? 5 : 6;
+    slot.live = true;
+    slot.unitId = u?.id ?? unitId;
+    slot.x = x;
+    slot.y = y;
+    slot.t = 0;
+    slot.max = holyDuration(kind);
+    slot.kind = kind;
+    slot.seed = this.rng() * Math.PI * 2;
+    slot.rays = Array.from({ length: rayCount }, (_, i) => (Math.PI * 2 * i) / rayCount + (this.rng() - 0.5) * 0.18);
   }
 
   /** One burning patch per Fireball area cell, all procedural so it conforms to every map. */
@@ -2377,34 +2463,49 @@ export class BattleEngine {
   }
 
   /** A bolt struck down onto one hex — see LightningFx. The jagged shape (main bolt plus
-   * 2-3 forks) is rolled once here so it stays put for the strike's whole short life. */
-  private emitLightningFx(x: number, y: number): void {
+   * forks) is rolled once here so it stays put for the strike's whole short life.
+   * `power: "shock"` is Choque; `"raio"` is Relâmpago; `"t3"` is Lighting Tier 3. */
+  private emitLightningFx(x: number, y: number, power: "shock" | "raio" | "t3" = "shock"): void {
     if (this.reducedMotion) return;
-    let slot = this.lightningFx.find((l) => !l.live);
-    if (!slot) {
-      slot = this.lightningFx[0]!;
-      let oldest = 0;
-      for (const l of this.lightningFx) {
-        if (l.t / l.max > oldest) {
-          oldest = l.t / l.max;
-          slot = l;
+    const emitOne = (spread: number, segs: number, branchMin: number, branchExtra: number, hue: number) => {
+      let slot = this.lightningFx.find((l) => !l.live);
+      if (!slot) {
+        slot = this.lightningFx[0]!;
+        let oldest = 0;
+        for (const l of this.lightningFx) {
+          if (l.t / l.max > oldest) {
+            oldest = l.t / l.max;
+            slot = l;
+          }
         }
-      }
-    } else this.lightningFxLive += 1;
-    const rollSegs = (n: number, spread: number) => Array.from({ length: n }, () => (this.rng() - 0.5) * spread);
-    slot.live = true;
-    slot.x = x;
-    slot.y = y;
-    slot.t = 0;
-    slot.max = LIGHTNING_STRIKE_DUR;
-    slot.hue = 200 + this.rng() * 20;
-    slot.segs = rollSegs(9, 0.34);
-    const branchCount = 2 + Math.floor(this.rng() * 2);
-    slot.branches = Array.from({ length: branchCount }, () => ({
-      at: 0.3 + this.rng() * 0.45,
-      side: this.rng() < 0.5 ? -1 : 1,
-      segs: rollSegs(4, 0.4),
-    }));
+      } else this.lightningFxLive += 1;
+      const rollSegs = (n: number, s: number) => Array.from({ length: n }, () => (this.rng() - 0.5) * s);
+      slot.live = true;
+      slot.x = x;
+      slot.y = y;
+      slot.t = 0;
+      slot.max = power === "t3" ? LIGHTNING_T3_DUR : power === "raio" ? LIGHTNING_RAIO_DUR : LIGHTNING_STRIKE_DUR;
+      slot.hue = hue;
+      slot.segs = rollSegs(segs, spread);
+      slot.power = power;
+      const branchCount = branchMin + Math.floor(this.rng() * (branchExtra + 1));
+      const branchSegs = power === "t3" ? 7 : power === "raio" ? 6 : 4;
+      const branchSpread = power === "t3" ? 0.62 : power === "raio" ? 0.55 : 0.4;
+      slot.branches = Array.from({ length: branchCount }, () => ({
+        at: 0.18 + this.rng() * 0.58,
+        side: this.rng() < 0.5 ? -1 : 1,
+        segs: rollSegs(branchSegs, branchSpread),
+      }));
+    };
+    if (power === "t3") {
+      emitOne(0.2, 9, 2, 1, 206 + this.rng() * 10);
+      emitOne(0.12, 7, 1, 1, 198 + this.rng() * 8);
+    } else if (power === "raio") {
+      emitOne(0.42, 14, 4, 2, 210 + this.rng() * 18);
+      emitOne(0.28, 11, 2, 2, 198 + this.rng() * 14);
+    } else {
+      emitOne(0.34, 9, 2, 1, 200 + this.rng() * 20);
+    }
   }
 
   private spawnHit(target: Unit, dmg: number, crit: boolean, physicalImpact = false): void {
@@ -2726,6 +2827,18 @@ export class BattleEngine {
     sfxPlay.ui();
   }
 
+  startLightningTier3(): void {
+    const u = this.units.find((x) => x.id === this.selectedId);
+    if (!u || u.acted || this.tierRemaining(u, "lightningTier3") <= 0) return;
+    this.mode = "awaitSpell";
+    this.spellKind = "lightningTier3";
+    this.spellArmed = false;
+    this.spellAim = null;
+    this.hover = null;
+    this.tip = `${LIGHTNING_T3.name}: alcance ${LIGHTNING_T3.range}, ${lightningTier3Formula(u.mag)} − RES. Atravessa cobertura e barricadas. Eco ${diceFormula(LIGHTNING_T3.echoDice, LIGHTNING_T3.echoFaces, LIGHTNING_T3.echoBonus)} − RES. Toque no inimigo.`;
+    sfxPlay.ui();
+  }
+
   startMagicMissile(): void {
     const u = this.units.find((x) => x.id === this.selectedId);
     if (!u || u.acted || this.tierRemaining(u, "magicMissile") <= 0) return;
@@ -2775,13 +2888,27 @@ export class BattleEngine {
     sfxPlay.ui();
   }
 
-  /** Sweep (Lancer tier 2) needs no target — it always hits every enemy on an adjacent hex
-   * and resolves immediately, same as Esperar/Arrombar rather than the aim-then-Lançar flow
-   * every other spell uses. */
+  /** Sweep (Lancer tier 2): self-centered AoE — preview the radius, then confirm. */
   startSweep(): void {
     const u = this.units.find((x) => x.id === this.selectedId);
     if (!u || u.acted || this.tierRemaining(u, "sweep") <= 0) return;
-    const tiles = hexNeighbors(u.x, u.y);
+    this.mode = "awaitSpell";
+    this.spellKind = "sweep";
+    this.spellArmed = true;
+    this.spellAim = { x: u.x, y: u.y };
+    this.hover = { x: u.x, y: u.y };
+    this.tip = `${SWEEP.name}: inimigos a até ${SWEEP.radius} hexes, dano de arma, empurra ${SWEEP.knockback} hex. A área está marcada — Lançar para confirmar.`;
+    sfxPlay.ui();
+  }
+
+  private sweepTiles(u: Unit): Point[] {
+    return hexAreaTiles({ x: u.x, y: u.y }, SWEEP.radius, this.cols, this.rows).filter((t) => t.x !== u.x || t.y !== u.y);
+  }
+
+  private confirmSweep(): void {
+    const u = this.units.find((x) => x.id === this.selectedId);
+    if (!u || this.mode !== "awaitSpell" || this.spellKind !== "sweep") return;
+    const tiles = this.sweepTiles(u);
     const ids: string[] = [];
     for (const t of tiles) {
       const who = this.units.find((x) => x.alive && occupies(x, t.x, t.y));
@@ -2830,7 +2957,7 @@ export class BattleEngine {
     this.spellArmed = false;
     this.spellAim = null;
     this.hover = null;
-    this.tip = `${WEB_OF_DREAMS.name}: cria uma teia grudenta por ${WEB_OF_DREAMS.durationRounds} rodadas — quem estiver dentro fica com movimento reduzido a 1 hex, e testa ${Math.round(WEB_OF_DREAMS.sleepChance * 100)}% de chance de adormecer por ${diceFormula(WEB_OF_DREAMS.sleepDice, WEB_OF_DREAMS.sleepFaces, 0)} turnos a cada turno que permanecer lá dentro (cumulativo). Alcance ${WEB_OF_DREAMS.range}. Toque para mirar.`;
+    this.tip = `${WEB_OF_DREAMS.name}: cria uma teia grudenta por ${WEB_OF_DREAMS.durationRounds} rodadas — quem estiver dentro fica com movimento reduzido a 1 hex, e testa ${Math.round(WEB_OF_DREAMS.sleepChance * 100)}% de chance de adormecer por ${diceFormula(WEB_OF_DREAMS.sleepDice, WEB_OF_DREAMS.sleepFaces, 0)} turnos a cada turno que permanecer lá dentro (cumulativo). Alcance ${WEB_OF_DREAMS.range}, raio ${webOfDreamsSize(u.level)}. Toque para mirar.`;
     sfxPlay.ui();
   }
 
@@ -2927,8 +3054,13 @@ export class BattleEngine {
 
   confirmSpell(): void {
     const u = this.units.find((x) => x.id === this.selectedId);
+    if (!u || this.mode !== "awaitSpell" || !this.spellKind) return;
+    if (this.spellKind === "sweep") {
+      this.confirmSweep();
+      return;
+    }
     const cell = this.hover;
-    if (!u || this.mode !== "awaitSpell" || !cell || !this.spellKind) return;
+    if (!cell) return;
     if (this.spellKind === "fireball") {
       this.confirmFireball();
       return;
@@ -2965,6 +3097,10 @@ export class BattleEngine {
       this.castLightning(u, cell);
       return;
     }
+    if (this.spellKind === "lightningTier3") {
+      this.castLightningTier3(u, cell);
+      return;
+    }
     if (this.spellKind === "magicMissile") {
       this.castMagicMissile(u, cell);
       return;
@@ -2998,9 +3134,11 @@ export class BattleEngine {
       return;
     }
     // instant, resolved directly by their own startX() — never reaches here
-    if (this.spellKind === "sweep" || this.spellKind === "auraOfProtection" || this.spellKind === "intimidatingPresence") return;
+    if (this.spellKind === "auraOfProtection" || this.spellKind === "intimidatingPresence") return;
     // secondWind is a passive triggered from startOfTurnEffects, never armed via a startX()
     if (this.spellKind === "secondWind") return;
+    // Choque is enemy-AI only — never armed from the player hotbar
+    if (this.spellKind === "shock") return;
     this.castHeal(u, cell, this.spellKind);
   }
 
@@ -3139,6 +3277,19 @@ export class BattleEngine {
       if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > LIGHTNING.range) return false;
       return true;
     }
+    if (this.spellKind === "lightningTier3") {
+      const here = occupancy(this.units).get(key(cell.x, cell.y));
+      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > LIGHTNING_T3.range) return false;
+      return true;
+    }
+    if (this.spellKind === "shock") {
+      const here = occupancy(this.units).get(key(cell.x, cell.y));
+      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > SHOCK.range) return false;
+      return true;
+    }
+    if (this.spellKind === "sweep") {
+      return manhattan(caster, cell) <= SWEEP.radius;
+    }
     if (this.spellKind === "magicMissile") {
       const here = occupancy(this.units).get(key(cell.x, cell.y));
       if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > MAGIC_MISSILE.range) return false;
@@ -3207,16 +3358,23 @@ export class BattleEngine {
     return capped.length ? capped : null;
   }
 
-  /** Sweep (Lancer tier 2): shoves `foe` one hex further along the line from `att` through
-   * `foe`, silently doing nothing if that hex is off the board, impassable, or already
-   * occupied — a blocked shove just fails, it never displaces someone else instead. */
+  /** Sweep / Shoulder Smash: shoves `foe` one hex further away from `att`, silently doing
+   * nothing if that hex is off the board, impassable, or already occupied — a blocked shove
+   * just fails, it never displaces someone else instead. Always one hex (SWEEP.knockback),
+   * even when the target is two hexes out in Sweep's radius-2 area. */
   private knockBack(att: Unit, foe: Unit): void {
-    const from = oddrToCube(att.x, att.y);
-    const at = oddrToCube(foe.x, foe.y);
-    const dir = { q: at.q - from.q, r: at.r - from.r, s: at.s - from.s };
-    const pushed = cubeAdd(at, dir);
-    const dest = cubeToOddr(pushed.q, pushed.r);
-    if (!inBounds(dest.x, dest.y, this.cols, this.rows)) return;
+    const neighbors = hexNeighbors(foe.x, foe.y);
+    let dest: Point | null = null;
+    let best = manhattan(att, foe);
+    for (const n of neighbors) {
+      if (!inBounds(n.x, n.y, this.cols, this.rows)) continue;
+      const d = manhattan(att, n);
+      if (d > best) {
+        best = d;
+        dest = n;
+      }
+    }
+    if (!dest) return;
     if (!TERRAIN[tileAt(this.tiles, this.cols, dest.x, dest.y)].passable) return;
     if (this.units.some((u) => u.alive && occupies(u, dest.x, dest.y))) return;
     foe.x = dest.x;
@@ -3419,6 +3577,35 @@ export class BattleEngine {
     });
   }
 
+  private castLightningTier3(unit: Unit, cell: Point): void {
+    if (!this.spellAimValid(unit, cell)) {
+      this.tip = "Alvo fora de alcance.";
+      sfxPlay.ui();
+      return;
+    }
+    const occ = occupancy(this.units);
+    const foe = occ.get(key(cell.x, cell.y));
+    if (!foe) return;
+    this.spendTier(unit, "lightningTier3");
+    this.spellKind = null;
+    this.missileTargets = [];
+    this.tip = null;
+    this.mode = "locked";
+    this.queue.push({
+      type: "spell",
+      att: unit.id,
+      tiles: [cell],
+      ids: [foe.id],
+      dice: LIGHTNING_T3.dice,
+      faces: LIGHTNING_T3.faces,
+      bonus: LIGHTNING_T3.bonus,
+      label: LIGHTNING_T3.name,
+      echo: { dice: LIGHTNING_T3.echoDice, faces: LIGHTNING_T3.echoFaces, bonus: LIGHTNING_T3.echoBonus },
+      spellMul: LIGHTNING_T3.mul,
+      spellKind: "lightningTier3",
+    });
+  }
+
   /** Each missile is aimed separately, so the cast collects one target per tap and only
    * fires once they are all chosen. They may be stacked on one enemy or spread around. */
   private castMagicMissile(unit: Unit, cell: Point): void {
@@ -3598,6 +3785,7 @@ export class BattleEngine {
       flash: 0,
       levelGlow: 0,
       healGlow: 0,
+      healGlowKind: "potionZero",
       fade: 1,
       bob: 0,
       level: unit.level,
@@ -3611,6 +3799,7 @@ export class BattleEngine {
       footprintH: cls.footprintH,
       footprintOffsets: cls.footprintOffsets,
       shock: null,
+      shockCharges: 0,
       diseased: false,
       diseaseBase: null,
       poisoned: false,
@@ -3652,7 +3841,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const cells = hexAreaTiles(click, WEB_OF_DREAMS.size, this.cols, this.rows);
+    const cells = hexAreaTiles(click, webOfDreamsSize(unit.level), this.cols, this.rows);
     const cellKeys = new Set(cells.map((p) => key(p.x, p.y)));
     this.webZones.push({ cells: cellKeys, roundsLeft: WEB_OF_DREAMS.durationRounds });
     let asleepCount = 0;
@@ -3894,7 +4083,7 @@ export class BattleEngine {
       actor.x = Math.round(actor.drawX);
       actor.y = Math.round(actor.drawY);
       this.tip = `${def.name} · ${target.name} curado(a) da doença.`;
-      this.emitBeneficialGlow(target);
+      this.emitHolyFx(target.x, target.y, "potion", target.id);
       sfxPlay.ui();
       this.finishAction(actor);
       return;
@@ -3932,7 +4121,7 @@ export class BattleEngine {
         frame: 0,
       });
       this.tip = `${def.name} · +${restored} usos de magia (${target.name})`;
-      this.emitBeneficialGlow(target);
+      this.emitHolyFx(target.x, target.y, "potion", target.id);
       sfxPlay.ui();
       this.finishAction(actor);
       return;
@@ -3963,7 +4152,7 @@ export class BattleEngine {
       frame: 0,
     });
     this.tip = `${potionLabel(kind)} · +${gained} HP (${target.name})`;
-    this.emitBeneficialGlow(target);
+    this.emitHolyFx(target.x, target.y, "potion", target.id);
     sfxPlay.ui();
     this.finishAction(actor);
   }
@@ -4308,6 +4497,45 @@ export class BattleEngine {
     this.activeUnitId = null;
   }
 
+  /** Enemy Choque: same ignore-cover targeting as Relâmpago, ~1/3 the stats. Returns true
+   * if a cast was queued so the caller can skip the rest of the AI. */
+  private tryAiShock(
+    next: Unit,
+    reach: ReturnType<typeof computeReachable>,
+    walkReach: ReturnType<typeof computeReachable>,
+    players: Unit[],
+  ): boolean {
+    if (next.shockCharges <= 0) return false;
+    let best: { foe: Unit; from: Point; score: number } | null = null;
+    for (const cell of reach.values()) {
+      for (const foe of players) {
+        if (manhattan(cell, foe) > SHOCK.range) continue;
+        const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
+        if (!best || score > best.score) best = { foe, from: { x: cell.x, y: cell.y }, score };
+      }
+    }
+    if (!best) return false;
+    if (best.from.x !== next.x || best.from.y !== next.y) {
+      this.queue.push({ type: "move", id: next.id, path: reconstructPath(walkReach, best.from) });
+    }
+    next.shockCharges -= 1;
+    this.queue.push({
+      type: "spell",
+      att: next.id,
+      tiles: [{ x: best.foe.x, y: best.foe.y }],
+      ids: [best.foe.id],
+      dice: SHOCK.dice,
+      faces: SHOCK.faces,
+      bonus: SHOCK.bonus,
+      label: SHOCK.name,
+      echo: { dice: SHOCK.echoDice, faces: SHOCK.echoFaces, bonus: SHOCK.echoBonus },
+      spellMul: SHOCK.mul,
+      spellKind: "shock",
+    });
+    this.queue.push({ type: "delay", dur: 0.12 });
+    return true;
+  }
+
   private runAiFor(next: Unit): void {
     this.smashBarricades(next);
     const reach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units);
@@ -4324,36 +4552,28 @@ export class BattleEngine {
     const walkReach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units, false);
     const players = this.units.filter((u) => u.side === "player" && u.alive);
 
-    // Cultist ("Feiticeiro") is the one enemy mage — see cultistSpellUses. Lightning outranks
-    // Magic Missile whenever both are still banked, and it prefers spending a charge over its
-    // plain ranged attack whenever a target is actually in range (Lightning ignores cover;
-    // Magic Missile still needs line of sight); if not, it falls through to the same
-    // move-and-attack (or chase) logic as any other enemy.
-    if (next.classId === "cultist" && (next.spells.tier1 > 0 || next.spells.tier2 > 0)) {
-      const spellKind: "lightning" | "magicMissile" = next.spells.tier2 > 0 ? "lightning" : "magicMissile";
-      const range = spellKind === "lightning" ? LIGHTNING.range : MAGIC_MISSILE.range;
-      let bestSpell: { foe: Unit; from: Point; score: number } | null = null;
-      for (const cell of reach.values()) {
-        for (const foe of players) {
-          if (manhattan(cell, foe) > range) continue;
-          if (spellKind !== "lightning" && !clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
-          const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
-          if (!bestSpell || score > bestSpell.score) bestSpell = { foe, from: { x: cell.x, y: cell.y }, score };
+    // Cultist ("Feiticeiro") — Relâmpago outranks Choque outranks Magic Missile. Choque
+    // ignores cover the same way Relâmpago does; Magic Missile still needs line of sight.
+    if (next.classId === "cultist" && (next.spells.tier1 > 0 || next.spells.tier2 > 0 || next.shockCharges > 0)) {
+      if (next.spells.tier2 > 0) {
+        let bestBolt: { foe: Unit; from: Point; score: number } | null = null;
+        for (const cell of reach.values()) {
+          for (const foe of players) {
+            if (manhattan(cell, foe) > LIGHTNING.range) continue;
+            const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
+            if (!bestBolt || score > bestBolt.score) bestBolt = { foe, from: { x: cell.x, y: cell.y }, score };
+          }
         }
-      }
-      if (bestSpell) {
-        if (bestSpell.from.x !== next.x || bestSpell.from.y !== next.y) {
-          this.queue.push({ type: "move", id: next.id, path: reconstructPath(walkReach, bestSpell.from) });
-        }
-        this.spendTier(next, spellKind);
-        const tiles = [{ x: bestSpell.foe.x, y: bestSpell.foe.y }];
-        const ids = [bestSpell.foe.id];
-        if (spellKind === "lightning") {
+        if (bestBolt) {
+          if (bestBolt.from.x !== next.x || bestBolt.from.y !== next.y) {
+            this.queue.push({ type: "move", id: next.id, path: reconstructPath(walkReach, bestBolt.from) });
+          }
+          this.spendTier(next, "lightning");
           this.queue.push({
             type: "spell",
             att: next.id,
-            tiles,
-            ids,
+            tiles: [{ x: bestBolt.foe.x, y: bestBolt.foe.y }],
+            ids: [bestBolt.foe.id],
             dice: lightningDice(),
             faces: LIGHTNING.faces,
             bonus: LIGHTNING.bonus,
@@ -4362,12 +4582,31 @@ export class BattleEngine {
             spellMul: LIGHTNING.mul,
             spellKind: "lightning",
           });
-        } else {
+          this.queue.push({ type: "delay", dur: 0.12 });
+          return;
+        }
+      }
+      if (this.tryAiShock(next, reach, walkReach, players)) return;
+      if (next.spells.tier1 > 0) {
+        let bestSpell: { foe: Unit; from: Point; score: number } | null = null;
+        for (const cell of reach.values()) {
+          for (const foe of players) {
+            if (manhattan(cell, foe) > MAGIC_MISSILE.range) continue;
+            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
+            const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
+            if (!bestSpell || score > bestSpell.score) bestSpell = { foe, from: { x: cell.x, y: cell.y }, score };
+          }
+        }
+        if (bestSpell) {
+          if (bestSpell.from.x !== next.x || bestSpell.from.y !== next.y) {
+            this.queue.push({ type: "move", id: next.id, path: reconstructPath(walkReach, bestSpell.from) });
+          }
+          this.spendTier(next, "magicMissile");
           this.queue.push({
             type: "spell",
             att: next.id,
-            tiles,
-            ids,
+            tiles: [{ x: bestSpell.foe.x, y: bestSpell.foe.y }],
+            ids: [bestSpell.foe.id],
             dice: MAGIC_MISSILE.dice,
             faces: MAGIC_MISSILE.faces,
             bonus: MAGIC_MISSILE.bonus,
@@ -4375,19 +4614,14 @@ export class BattleEngine {
             spellMul: MAGIC_MISSILE.mul,
             spellKind: "magicMissile",
           });
+          this.queue.push({ type: "delay", dur: 0.12 });
+          return;
         }
-        this.queue.push({ type: "delay", dur: 0.12 });
-        return;
       }
     }
 
-    // Birolho — see birolhoSpellUses. Lightning (once unlocked at level 10) outranks Caustic
-    // Venom, which outranks its base Magic Missile: same "spend the rarest charge first"
-    // priority as the cultist branch above, just three deep. Lightning and Magic Missile reuse
-    // that exact single-bolt targeting; Caustic Venom is its own AoE, so instead of scoring one
-    // foe it scores by how many players its splash (the same size/range as the player-facing
-    // spell) would land on, aimed at whichever foe's cell catches the most / lowest-hp targets.
-    if (next.classId === "birolho" && (next.spells.tier1 > 0 || next.spells.tier2 > 0 || next.spells.tier4 > 0)) {
+    // Birolho — Relâmpago outranks Caustic Venom outranks Choque outranks Magic Missile.
+    if (next.classId === "birolho" && (next.spells.tier1 > 0 || next.spells.tier2 > 0 || next.spells.tier4 > 0 || next.shockCharges > 0)) {
       if (next.spells.tier2 > 0) {
         let bestBolt: { foe: Unit; from: Point; score: number } | null = null;
         for (const cell of reach.values()) {
@@ -4473,6 +4707,7 @@ export class BattleEngine {
           return;
         }
       }
+      if (this.tryAiShock(next, reach, walkReach, players)) return;
       if (next.spells.tier1 > 0) {
         let bestBolt: { foe: Unit; from: Point; score: number } | null = null;
         for (const cell of reach.values()) {
@@ -4504,6 +4739,18 @@ export class BattleEngine {
           return;
         }
       }
+    }
+
+    // Any other enemy mage (a player-class mage spawned as a foe, promoted casters, etc.)
+    // still gets Choque even if they don't share the cultist/birolho AI branches.
+    if (
+      next.side === "enemy" &&
+      next.shockCharges > 0 &&
+      next.classId !== "cultist" &&
+      next.classId !== "birolho" &&
+      this.tryAiShock(next, reach, walkReach, players)
+    ) {
+      return;
     }
 
     // Brigand ("Besteiro") is the one enemy archer — see brigandSpellUses. Piercing outranks
@@ -4662,6 +4909,14 @@ export class BattleEngine {
     }
 
     if (this.mode === "awaitSpell" && selected) {
+      if (this.spellKind === "sweep") {
+        if (manhattan(selected, cell) <= SWEEP.radius) this.confirmSweep();
+        else {
+          this.tip = "A área já está marcada — Lançar para confirmar.";
+          sfxPlay.ui();
+        }
+        return;
+      }
       this.hover = cell;
       if (!this.spellAimValid(selected, cell)) {
         this.tip =
@@ -5312,7 +5567,7 @@ export class BattleEngine {
       };
     }
     const heavy = u.size >= 4 ? 1.4 : u.size === 2 ? 1.12 : 1;
-    if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.size >= 4) {
+    if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "lancer" || u.sprite === "conjurer" || u.size >= 4) {
       return { bob: 0, sway: 0, breath: 0 };
     }
     const bob = Math.sin(t * 1.55) * (1.15 * heavy);
@@ -5523,11 +5778,13 @@ export class BattleEngine {
           overlay(fireballTiles(fireballOrigin(cell, this.cols, this.rows), this.cols, this.rows), "rgba(235,140,70,0.55)");
         }
       } else if (selected && this.spellKind === "causticVenom") {
-        overlay(fireballRangeTiles(selected, this.cols, this.rows), "rgba(200,210,90,0.45)");
+        overlay(this.healRangeTiles(selected, CAUSTIC_VENOM.range), "rgba(200,210,90,0.45)");
         const cell = this.hover ?? this.spellAim;
         if (cell && manhattan(selected, cell) <= CAUSTIC_VENOM.range) {
           overlay(hexAreaTiles(fireballOrigin(cell, this.cols, this.rows), CAUSTIC_VENOM.size, this.cols, this.rows), "rgba(200,210,90,0.55)");
         }
+      } else if (selected && this.spellKind === "sweep") {
+        overlay(this.sweepTiles(selected), "rgba(220,150,70,0.5)");
       } else if (selected && this.spellKind === "longShot") {
         const reach: Point[] = [];
         const max = this.longMax(selected);
@@ -5567,12 +5824,16 @@ export class BattleEngine {
         overlay(this.healRangeTiles(selected, WEB_OF_DREAMS.range), "rgba(170,140,230,0.45)");
         const cell = this.hover ?? this.spellAim;
         if (cell && manhattan(selected, cell) <= WEB_OF_DREAMS.range) {
-          overlay(hexAreaTiles(cell, WEB_OF_DREAMS.size, this.cols, this.rows), "rgba(185,155,240,0.55)");
+          overlay(hexAreaTiles(cell, webOfDreamsSize(selected.level), this.cols, this.rows), "rgba(185,155,240,0.55)");
         }
       } else if (selected && this.spellKind === "lightning") {
         overlay(this.healRangeTiles(selected, LIGHTNING.range), "rgba(140,200,245,0.45)");
         const cell = this.hover ?? this.spellAim;
         if (cell && this.spellAimValid(selected, cell)) overlay([cell], "rgba(160,215,255,0.55)");
+      } else if (selected && this.spellKind === "lightningTier3") {
+        overlay(this.healRangeTiles(selected, LIGHTNING_T3.range), "rgba(120,210,255,0.5)");
+        const cell = this.hover ?? this.spellAim;
+        if (cell && this.spellAimValid(selected, cell)) overlay([cell], "rgba(180,235,255,0.65)");
       } else if (selected && this.spellKind === "magicMissile") {
         overlay(this.healRangeTiles(selected, MAGIC_MISSILE.range), "rgba(180,150,235,0.45)");
         const cell = this.hover ?? this.spellAim;
@@ -5737,38 +5998,41 @@ export class BattleEngine {
       // for normal-size sprites, so the feet don't float above the tile they stand on.
       const footY = s >= 4 ? tile * 0.9 : cell * 0.42;
       ctx.translate(px + sway, py + footY + bob);
-      // Dedicated left/right walk+attack cuts (conjurer, lancer) already face the way we want,
-      // so flipping them would mirror the staff/spear onto the wrong side. Idle still flips.
-      const dirAction = (u.sprite === "malrec" || u.sprite === "aldric") && (atk != null || moving);
+      // Dedicated left/right walk+attack cuts already face the enemy, so flipping
+      // them would put the spear/staff on the wrong side. Idle still flips.
+      const dirAction = (u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "lancer") && (atk != null || moving);
       const flip = dirAction ? 1 : u.facing;
-      if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric") ctx.scale(flip, 1);
+      if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "lancer" || u.sprite === "conjurer") ctx.scale(flip, 1);
       else ctx.scale(flip * (1 - breath * 0.22), 1 + breath);
       if (u.levelGlow > 0) {
-        const pulse = 0.75 + Math.sin(this.time * 7) * 0.25;
-        const bg = ctx.createRadialGradient(0, -h * 0.5, 0, 0, -h * 0.5, w * 1.15);
-        bg.addColorStop(0, `rgba(255,214,120,${0.5 * u.levelGlow * pulse})`);
+        const pulse = 0.7 + Math.sin(this.time * 6.2) * 0.3;
+        const bg = ctx.createRadialGradient(0, -h * 0.5, 0, 0, -h * 0.5, w * 1.65);
+        bg.addColorStop(0, `rgba(255,226,140,${0.62 * u.levelGlow * pulse})`);
+        bg.addColorStop(0.45, `rgba(255,196,70,${0.28 * u.levelGlow * pulse})`);
         bg.addColorStop(1, "rgba(255,214,120,0)");
         ctx.fillStyle = bg;
         ctx.beginPath();
-        ctx.arc(0, -h * 0.5, w * 1.15, 0, Math.PI * 2);
+        ctx.arc(0, -h * 0.5, w * 1.65, 0, Math.PI * 2);
         ctx.fill();
-        ctx.shadowColor = `rgba(255,208,110,${0.95 * u.levelGlow})`;
-        ctx.shadowBlur = w * 0.4 * u.levelGlow * pulse;
+        ctx.shadowColor = `rgba(255,214,90,${0.98 * u.levelGlow})`;
+        ctx.shadowBlur = w * 0.62 * u.levelGlow * pulse;
       }
-      // A gentler, cooler-white "divine light" halo for a heal spell landing or a potion
-      // being drunk — same technique as levelGlow, its own softer palette and pace so the
-      // two read as different events even if they happen to overlap.
+      // Heal / potion halo on the sprite itself. Palette comes from healGlowKind so Cura
+      // Menor, Cura Média, Curar Doença, the new potion burst and Potionzero all read apart.
       if (u.healGlow > 0) {
         const pulse = 0.8 + Math.sin(this.time * 5) * 0.2;
-        const bg = ctx.createRadialGradient(0, -h * 0.5, 0, 0, -h * 0.5, w * 1.05);
-        bg.addColorStop(0, `rgba(255,248,224,${0.42 * u.healGlow * pulse})`);
-        bg.addColorStop(1, "rgba(255,248,224,0)");
+        const halo = this.healHaloRgb(u.healGlowKind);
+        const reach = u.healGlowKind === "holyMedium" ? 1.35 : u.healGlowKind === "holyMinor" ? 0.92 : 1.08;
+        const bg = ctx.createRadialGradient(0, -h * 0.5, 0, 0, -h * 0.5, w * reach);
+        bg.addColorStop(0, `rgba(${halo.core},${0.5 * u.healGlow * pulse})`);
+        bg.addColorStop(0.45, `rgba(${halo.mid},${0.22 * u.healGlow * pulse})`);
+        bg.addColorStop(1, `rgba(${halo.mid},0)`);
         ctx.fillStyle = bg;
         ctx.beginPath();
-        ctx.arc(0, -h * 0.5, w * 1.05, 0, Math.PI * 2);
+        ctx.arc(0, -h * 0.5, w * reach, 0, Math.PI * 2);
         ctx.fill();
-        ctx.shadowColor = `rgba(255,250,235,${0.85 * u.healGlow})`;
-        ctx.shadowBlur = w * 0.32 * u.healGlow * pulse;
+        ctx.shadowColor = `rgba(${halo.core},${0.9 * u.healGlow})`;
+        ctx.shadowBlur = w * (u.healGlowKind === "holyMedium" ? 0.48 : 0.32) * u.healGlow * pulse;
       }
       if (u.flash > 0) ctx.filter = `brightness(${1.8 + u.flash})`;
       if (img) ctx.drawImage(img, -w / 2, -h, w, h);
@@ -5780,14 +6044,15 @@ export class BattleEngine {
       // rim glow following the art's own alpha edges) so the effect reads as coming off the
       // character rather than just floating behind it.
       if (u.levelGlow > 0 && img) {
-        const pulse = 0.75 + Math.sin(this.time * 7) * 0.25;
-        ctx.shadowBlur = w * 0.55 * u.levelGlow * pulse;
+        const pulse = 0.7 + Math.sin(this.time * 6.2) * 0.3;
+        ctx.shadowBlur = w * 0.8 * u.levelGlow * pulse;
         ctx.drawImage(img, -w / 2, -h, w, h);
       }
       if (u.healGlow > 0 && img) {
         const pulse = 0.8 + Math.sin(this.time * 5) * 0.2;
-        ctx.shadowColor = `rgba(255,250,235,${0.85 * u.healGlow})`;
-        ctx.shadowBlur = w * 0.42 * u.healGlow * pulse;
+        const halo = this.healHaloRgb(u.healGlowKind);
+        ctx.shadowColor = `rgba(${halo.core},${0.88 * u.healGlow})`;
+        ctx.shadowBlur = w * (u.healGlowKind === "holyMedium" ? 0.58 : 0.42) * u.healGlow * pulse;
         ctx.drawImage(img, -w / 2, -h, w, h);
       }
       this.drawStatusFx(ctx, u, w, h);
@@ -5818,6 +6083,27 @@ export class BattleEngine {
           ctx.fillStyle = "#f0ebe3";
           ctx.strokeText(`${u.hp}`, px, by - 1);
           ctx.fillText(`${u.hp}`, px, by - 1);
+        }
+        if (u.levelGlow > 0) {
+          const pulse = 0.78 + Math.sin(this.time * 6.2) * 0.22;
+          const fontPx = Math.round(cell * (s >= 4 ? 0.72 : 0.58));
+          const numY = by - Math.max(10, cell * 0.22);
+          ctx.save();
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.font = `900 ${fontPx}px Figtree, sans-serif`;
+          ctx.shadowColor = `rgba(255, 210, 70, ${0.95 * u.levelGlow * pulse})`;
+          ctx.shadowBlur = fontPx * 0.9;
+          ctx.lineJoin = "round";
+          ctx.lineWidth = Math.max(5, fontPx * 0.2);
+          ctx.strokeStyle = "rgba(42, 24, 4, 0.92)";
+          ctx.strokeText(String(u.level), px, numY);
+          ctx.fillStyle = `rgba(255, 228, 120, ${0.35 + 0.65 * u.levelGlow * pulse})`;
+          ctx.fillText(String(u.level), px, numY);
+          ctx.shadowBlur = fontPx * 1.5;
+          ctx.fillStyle = `rgba(255, 248, 200, ${0.55 * u.levelGlow * pulse})`;
+          ctx.fillText(String(u.level), px, numY);
+          ctx.restore();
         }
         if (u.stunned) {
           const gx = px;
@@ -6185,13 +6471,14 @@ export class BattleEngine {
     if (this.lightningFxLive) {
       for (const l of this.lightningFx) {
         if (!l.live) continue;
+        const t3 = l.power === "t3";
+        const raio = l.power === "raio";
         const { cx, cy } = this.hexCenter(l.x, l.y);
-        const topY = cy - tile * LIGHTNING_FALL_HEIGHT;
+        const topY = t3 ? -tile * 0.2 : cy - tile * (raio ? LIGHTNING_RAIO_FALL_HEIGHT : LIGHTNING_FALL_HEIGHT);
         const k = l.t / l.max;
-        // The strike itself is near-instant (a real bolt doesn't travel visibly slowly), then
-        // holds bright for a beat before fading — distinct from a projectile's smooth flight.
-        const reveal = Math.min(1, l.t / 0.06);
-        const fade = k < 0.35 ? 1 : Math.max(0, 1 - (k - 0.35) / 0.65);
+        const reveal = Math.min(1, l.t / (t3 ? 0.07 : raio ? 0.1 : 0.06));
+        const hold = t3 ? 0.32 : raio ? 0.28 : 0.35;
+        const fade = k < hold ? 1 : Math.max(0, 1 - (k - hold) / (1 - hold));
         if (fade <= 0) continue;
 
         const n = l.segs.length;
@@ -6204,25 +6491,66 @@ export class BattleEngine {
         if (reveal >= (n + 1 - 0.001) / (n + 1)) mainPts.push({ x: cx, y: cy });
         if (mainPts.length < 2) continue;
 
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        const pulse = t3 ? 0.82 + 0.18 * Math.abs(Math.sin(l.t * 52 + l.hue)) : 1;
+
+        if (t3 || raio) {
+          const colW = tile * (t3 ? 1.8 : 0.55);
+          const col = ctx.createLinearGradient(cx, topY, cx, cy);
+          col.addColorStop(0, `hsla(${l.hue}, 100%, 90%, ${(t3 ? 0.28 : 0.18) * fade * pulse})`);
+          col.addColorStop(0.72, `hsla(${l.hue}, 100%, 70%, ${(t3 ? 0.12 : 0.08) * fade})`);
+          col.addColorStop(1, `hsla(${l.hue}, 100%, 80%, 0)`);
+          ctx.fillStyle = col;
+          ctx.beginPath();
+          ctx.rect(cx - colW, topY, colW * 2, cy - topY);
+          ctx.fill();
+        }
+
         const strokeBolt = (pts: { x: number; y: number }[], glowWidth: number, coreWidth: number) => {
           ctx.beginPath();
           pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
           ctx.lineJoin = "round";
           ctx.lineCap = "round";
-          ctx.strokeStyle = `hsla(${l.hue}, 100%, 70%, ${0.55 * fade})`;
+          if (t3) {
+            ctx.strokeStyle = `hsla(${l.hue}, 100%, 72%, ${0.35 * fade * pulse})`;
+            ctx.lineWidth = glowWidth * 1.7;
+            ctx.shadowColor = `hsla(${l.hue}, 100%, 80%, ${0.95 * fade})`;
+            ctx.shadowBlur = tile * 1.4;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = `hsla(${l.hue}, 100%, 78%, ${0.7 * fade * pulse})`;
+            ctx.lineWidth = glowWidth;
+            ctx.stroke();
+            ctx.strokeStyle = `rgba(255,255,255,${0.98 * fade * pulse})`;
+            ctx.lineWidth = coreWidth;
+            ctx.stroke();
+            ctx.strokeStyle = `rgba(255,255,255,${0.9 * fade * pulse})`;
+            ctx.lineWidth = coreWidth * 0.38;
+            ctx.stroke();
+            return;
+          }
+          ctx.strokeStyle = `hsla(${l.hue}, 100%, 70%, ${0.55 * fade * pulse})`;
           ctx.lineWidth = glowWidth;
-          ctx.shadowColor = `hsla(${l.hue}, 100%, 75%, ${0.9 * fade})`;
-          ctx.shadowBlur = tile * 0.5;
+          ctx.shadowColor = `hsla(${l.hue}, 100%, 78%, ${0.95 * fade * pulse})`;
+          ctx.shadowBlur = tile * (raio ? 0.85 : 0.5);
           ctx.stroke();
           ctx.shadowBlur = 0;
-          // A bright white core on top of the colored glow, so the bolt reads as firm and
-          // solid rather than a soft haze.
-          ctx.strokeStyle = `rgba(255,255,255,${0.95 * fade})`;
+          ctx.strokeStyle = `rgba(255,255,255,${0.96 * fade * pulse})`;
           ctx.lineWidth = coreWidth;
           ctx.stroke();
+          if (raio) {
+            ctx.strokeStyle = `rgba(255,255,255,${0.72 * fade * pulse})`;
+            ctx.lineWidth = coreWidth * 0.35;
+            ctx.stroke();
+          }
         };
 
-        strokeBolt(mainPts, tile * 0.24, tile * 0.08);
+        strokeBolt(
+          mainPts,
+          tile * (t3 ? 0.9 : raio ? 0.42 : 0.24),
+          tile * (t3 ? 0.26 : raio ? 0.14 : 0.08),
+        );
 
         for (const b of l.branches) {
           const startIdx = Math.min(mainPts.length - 1, Math.round(b.at * (n + 1)));
@@ -6233,31 +6561,223 @@ export class BattleEngine {
           const shown = Math.round(forkReveal * segCount);
           if (shown < 1) continue;
           const branchPts = [start];
+          const reach = t3 ? 0.95 : raio ? 0.85 : 0.7;
+          const side = t3 ? 0.85 : raio ? 0.72 : 0.5;
           for (let i = 0; i < shown; i++) {
             const f = (i + 1) / segCount;
             branchPts.push({
-              x: start.x + b.side * tile * 0.5 * f + b.segs[i]! * tile,
-              y: start.y + (cy - topY) * (1 - b.at) * f * 0.7,
+              x: start.x + b.side * tile * side * f + b.segs[i]! * tile,
+              y: start.y + (cy - topY) * (1 - b.at) * f * reach,
             });
           }
-          if (branchPts.length >= 2) strokeBolt(branchPts, tile * 0.13, tile * 0.045);
+          if (branchPts.length >= 2) {
+            strokeBolt(
+              branchPts,
+              tile * (t3 ? 0.42 : raio ? 0.2 : 0.13),
+              tile * (t3 ? 0.12 : raio ? 0.07 : 0.045),
+            );
+          }
         }
 
-        // A bright flash at the strike point, biggest right on impact.
-        if (k < 0.5) {
-          const flashFade = Math.max(0, 1 - k / 0.5);
-          const flash = ctx.createRadialGradient(cx, cy, 0, cx, cy, tile * 0.9);
-          flash.addColorStop(0, `hsla(${l.hue}, 100%, 88%, ${0.7 * flashFade})`);
+        if (k < (t3 ? 0.62 : raio ? 0.55 : 0.5)) {
+          const flashFade = Math.max(0, 1 - k / (t3 ? 0.62 : raio ? 0.55 : 0.5));
+          const flashR = tile * (t3 ? 2.1 : raio ? 1.55 : 0.9);
+          const flash = ctx.createRadialGradient(cx, cy, 0, cx, cy, flashR);
+          flash.addColorStop(0, `hsla(${l.hue}, 100%, 94%, ${(t3 ? 0.98 : raio ? 0.92 : 0.7) * flashFade * pulse})`);
+          flash.addColorStop(0.32, `hsla(${l.hue}, 100%, 78%, ${(t3 ? 0.55 : raio ? 0.45 : 0.3) * flashFade})`);
           flash.addColorStop(1, `hsla(${l.hue}, 100%, 70%, 0)`);
           ctx.fillStyle = flash;
           ctx.beginPath();
-          ctx.arc(cx, cy, tile * 0.9, 0, Math.PI * 2);
+          ctx.arc(cx, cy, flashR, 0, Math.PI * 2);
           ctx.fill();
         }
+        ctx.restore();
       }
       ctx.globalAlpha = 1;
     }
 
+    this.drawHolyFx(ctx, tile);
+
     if (shake) ctx.restore();
+  }
+
+  private healHaloRgb(kind: Unit["healGlowKind"]): { core: string; mid: string } {
+    if (kind === "disease") return { core: "200,255,230", mid: "70,210,160" };
+    if (kind === "potion") return { core: "255,230,170", mid: "255,150,60" };
+    if (kind === "holyMedium") return { core: "255,250,220", mid: "255,210,90" };
+    if (kind === "holyMinor") return { core: "255,248,230", mid: "255,220,150" };
+    return { core: "255,250,235", mid: "255,248,224" }; // potionZero
+  }
+
+  private drawHolyFx(ctx: CanvasRenderingContext2D, tile: number): void {
+    if (!this.holyFxLive) return;
+    for (const fx of this.holyFx) {
+      if (!fx.live) continue;
+      const u = fx.unitId ? this.units.find((n) => n.id === fx.unitId) : null;
+      const pos = u ? this.hexCenter(u.drawX, u.drawY) : this.hexCenter(fx.x, fx.y);
+      const cx = pos.cx;
+      const cy = pos.cy;
+      const k = fx.t / fx.max;
+      const appear = Math.min(1, fx.t / 0.07);
+      const hold = fx.kind === "medium" ? 0.36 : fx.kind === "disease" ? 0.32 : 0.26;
+      const fade = (k < hold ? 1 : Math.max(0, 1 - (k - hold) / (1 - hold))) * appear;
+      if (fade <= 0) continue;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      if (fx.kind === "potion") this.drawPotionBurst(ctx, cx, cy, tile, fx, fade, k);
+      else this.drawDivineLight(ctx, cx, cy, tile, fx, fade, k);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  private drawDivineLight(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    tile: number,
+    fx: HolyFx,
+    fade: number,
+    k: number,
+  ): void {
+    const medium = fx.kind === "medium";
+    const disease = fx.kind === "disease";
+    const h = disease ? 158 : 46;
+    const s = disease ? 80 : 95;
+    const height = tile * (medium ? 2.85 : disease ? 2.25 : 1.55);
+    const width = tile * (medium ? 0.58 : disease ? 0.48 : 0.32);
+    const topY = cy - height;
+    const chestY = cy - tile * 0.55;
+    const pulse = 0.88 + 0.12 * Math.abs(Math.sin(this.time * 7 + fx.seed));
+
+    const shaft = ctx.createLinearGradient(cx, topY, cx, cy + tile * 0.1);
+    shaft.addColorStop(0, `hsla(${h}, ${s}%, 96%, 0)`);
+    shaft.addColorStop(0.18, `hsla(${h}, ${s}%, 94%, ${(medium ? 0.42 : 0.22) * fade * pulse})`);
+    shaft.addColorStop(0.55, `hsla(${h}, ${s}%, 82%, ${(medium ? 0.55 : 0.32) * fade})`);
+    shaft.addColorStop(0.88, `hsla(${h}, ${s}%, 78%, ${(medium ? 0.28 : 0.16) * fade})`);
+    shaft.addColorStop(1, `hsla(${h}, ${s}%, 70%, 0)`);
+    ctx.fillStyle = shaft;
+    ctx.beginPath();
+    ctx.moveTo(cx - width * 0.22, topY);
+    ctx.lineTo(cx + width * 0.22, topY);
+    ctx.lineTo(cx + width, cy + tile * 0.08);
+    ctx.lineTo(cx - width, cy + tile * 0.08);
+    ctx.closePath();
+    ctx.fill();
+
+    const coreW = width * (medium ? 0.28 : 0.22);
+    const core = ctx.createLinearGradient(cx, topY, cx, cy);
+    core.addColorStop(0, `hsla(${h}, 40%, 100%, ${0.55 * fade})`);
+    core.addColorStop(0.7, `hsla(${h}, 80%, 96%, ${(medium ? 0.85 : 0.5) * fade})`);
+    core.addColorStop(1, `hsla(${h}, 80%, 90%, 0)`);
+    ctx.fillStyle = core;
+    ctx.fillRect(cx - coreW, topY, coreW * 2, cy - topY);
+
+    const bloomR = tile * (medium ? 1.45 : disease ? 1.2 : 0.82);
+    const bloom = ctx.createRadialGradient(cx, chestY, 0, cx, chestY, bloomR);
+    bloom.addColorStop(0, `hsla(${h}, 90%, 96%, ${(medium ? 0.72 : 0.4) * fade * pulse})`);
+    bloom.addColorStop(0.35, `hsla(${h}, ${s}%, 72%, ${(medium ? 0.38 : 0.2) * fade})`);
+    bloom.addColorStop(1, `hsla(${h}, ${s}%, 60%, 0)`);
+    ctx.fillStyle = bloom;
+    ctx.beginPath();
+    ctx.arc(cx, chestY, bloomR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.lineCap = "round";
+    for (let i = 0; i < fx.rays.length; i++) {
+      const ang = fx.rays[i]! + Math.sin(this.time * 2.4 + i) * 0.04;
+      const len = tile * (medium ? 1.15 : disease ? 0.95 : 0.62) * (0.75 + (i % 3) * 0.12);
+      ctx.strokeStyle = `hsla(${h}, ${s}%, ${disease ? 78 : 88}%, ${(medium ? 0.55 : 0.32) * fade})`;
+      ctx.lineWidth = Math.max(1.2, tile * (medium ? 0.045 : 0.028));
+      ctx.beginPath();
+      ctx.moveTo(cx, chestY);
+      ctx.lineTo(cx + Math.cos(ang) * len, chestY + Math.sin(ang) * len * 0.62);
+      ctx.stroke();
+    }
+
+    const groundR = tile * (medium ? 0.85 : 0.55) * (0.7 + k * 0.35);
+    const ground = ctx.createRadialGradient(cx, cy, 0, cx, cy, groundR);
+    ground.addColorStop(0, `hsla(${h}, ${s}%, 90%, ${(medium ? 0.55 : 0.3) * fade})`);
+    ground.addColorStop(1, `hsla(${h}, ${s}%, 70%, 0)`);
+    ctx.fillStyle = ground;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + tile * 0.06, groundR, groundR * 0.38, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (disease) {
+      const ringR = tile * (0.22 + k * 0.95);
+      ctx.strokeStyle = `hsla(158, 90%, 72%, ${0.55 * fade})`;
+      ctx.lineWidth = Math.max(1.5, tile * 0.045);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + tile * 0.04, ringR, ringR * 0.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    const motes = medium ? 16 : disease ? 12 : 7;
+    for (let i = 0; i < motes; i++) {
+      const rise = ((fx.seed * 13 + i * 0.37 + k * (medium ? 1.6 : 1.1)) % 1);
+      const sway = Math.sin(fx.seed + i * 1.7 + this.time * 3) * tile * 0.18;
+      const mx = cx + sway + ((i % 5) - 2) * tile * 0.08;
+      const my = cy - rise * height * 0.95;
+      const r = tile * (medium ? 0.045 : 0.03) * (1 - rise * 0.4) * fade;
+      ctx.fillStyle = `hsla(${h}, 80%, 96%, ${(0.55 + (i % 3) * 0.15) * fade})`;
+      ctx.beginPath();
+      ctx.arc(mx, my, Math.max(0.8, r), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  private drawPotionBurst(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    tile: number,
+    fx: HolyFx,
+    fade: number,
+    k: number,
+  ): void {
+    const chestY = cy - tile * 0.5;
+    const aura = ctx.createRadialGradient(cx, chestY, 0, cx, chestY, tile * 0.95);
+    aura.addColorStop(0, `hsla(32, 100%, 88%, ${0.55 * fade})`);
+    aura.addColorStop(0.4, `hsla(22, 95%, 58%, ${0.32 * fade})`);
+    aura.addColorStop(1, "hsla(18, 90%, 40%, 0)");
+    ctx.fillStyle = aura;
+    ctx.beginPath();
+    ctx.arc(cx, chestY, tile * 0.95, 0, Math.PI * 2);
+    ctx.fill();
+
+    for (let i = 0; i < 12; i++) {
+      const ang = fx.seed + i * 0.52 + fx.t * (2.8 + (i % 3) * 0.4);
+      const rad = tile * (0.18 + (i % 4) * 0.06) * (0.85 + Math.sin(fx.t * 6 + i) * 0.12);
+      const px = cx + Math.cos(ang) * rad;
+      const py = chestY + Math.sin(ang) * rad * 0.72 - tile * 0.08 * Math.sin(fx.t * 5 + i);
+      const r = tile * (0.04 + (i % 3) * 0.012) * fade;
+      ctx.fillStyle = i % 3 === 0 ? `hsla(48, 100%, 88%, ${0.9 * fade})` : `hsla(22, 95%, 62%, ${0.75 * fade})`;
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(1, r), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const splash = tile * (0.28 + k * 0.42);
+    ctx.strokeStyle = `hsla(28, 95%, 70%, ${0.55 * fade})`;
+    ctx.lineWidth = Math.max(1.4, tile * 0.04);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + tile * 0.05, splash, splash * 0.38, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    const puddle = ctx.createRadialGradient(cx, cy + tile * 0.05, 0, cx, cy + tile * 0.05, splash);
+    puddle.addColorStop(0, `hsla(36, 100%, 80%, ${0.4 * fade})`);
+    puddle.addColorStop(1, "hsla(24, 90%, 50%, 0)");
+    ctx.fillStyle = puddle;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + tile * 0.05, splash, splash * 0.38, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    for (let i = 0; i < 8; i++) {
+      const rise = ((fx.seed + i * 0.21 + k * 1.2) % 1);
+      ctx.fillStyle = `hsla(48, 100%, 92%, ${(0.7 - rise * 0.4) * fade})`;
+      ctx.beginPath();
+      ctx.arc(cx + Math.sin(fx.seed + i * 2) * tile * 0.22, cy - rise * tile * 1.05, tile * 0.028 * fade, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }

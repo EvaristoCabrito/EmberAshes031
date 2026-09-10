@@ -77,7 +77,7 @@ export type ClassId =
   // computed live from its summoner (see castSummonFamiliar), CLASSES.familiar only
   // supplies a sprite/size/range fallback and satisfies the ClassId-keyed tables below.
   | "familiar";
-export type SpriteId = "kael" | "nira" | "voss" | "salazar" | "malrec" | "aldric" | "soldier" | "brigand" | "captain" | "sorcerer" | "horror" | "Asherah" | "pikeman" | "wardog" | "troll" | "morvenian-wolf" | "butcher" | "birolho" | "familiar" | "swamp-blue-calf" | "ancient-golem";
+export type SpriteId = "kael" | "nira" | "voss" | "salazar" | "malrec" | "aldric" | "soldier" | "brigand" | "captain" | "sorcerer" | "horror" | "Asherah" | "pikeman" | "wardog" | "troll" | "morvenian-wolf" | "butcher" | "birolho" | "familiar" | "swamp-blue-calf" | "ancient-golem" | "lancer" | "conjurer";
 export type HealId = "cureMinor" | "cureWounds" | "cureLight";
 export type SpellKind =
   | "fireball"
@@ -85,6 +85,7 @@ export type SpellKind =
   | "longShot"
   | "piercing"
   | "lightning"
+  | "lightningTier3"
   | "magicMissile"
   | "causticVenom"
   | "doubleStrike"
@@ -101,7 +102,8 @@ export type SpellKind =
   | "divineWrath"
   | "shoulderSmash"
   | "intimidatingPresence"
-  | "stampede";
+  | "stampede"
+  | "shock";
 export type ScreenId = "boot" | "title" | "campaign" | "worldMap" | "briefing" | "cutscene" | "epilogue" | "battle" | "victory" | "defeat" | "inn" | "testMenu" | "mapEditor";
 export type Phase = "player" | "enemy";
 export type InputMode = "idle" | "selected" | "awaitAction" | "awaitAttack" | "awaitOffHand" | "awaitSpell" | "awaitPotion" | "locked";
@@ -294,9 +296,12 @@ export interface Unit {
    * glow drawn around the sprite in render() (see levelUpUnit/spawnLevelUp). */
   levelGlow: number;
   /** Same idea as levelGlow but for receiving a beneficial effect — a heal spell landing or
-   * a potion being drunk — drawn as a softer, warm-white "divine light" halo (see
-   * emitBeneficialGlow). Decays independently of levelGlow so the two can overlap. */
+   * a potion being drunk — drawn as a halo (see emitHolyFx / emitPotionZeroFx). Decays
+   * independently of levelGlow so the two can overlap. */
   healGlow: number;
+  /** Palette the healGlow halo uses: holy gold (minor/medium), disease teal, potion amber,
+   * or Potionzero (the original warm-white glow, kept for future skills). */
+  healGlowKind: "holyMinor" | "holyMedium" | "disease" | "potion" | "potionZero";
   fade: number;
   bob: number;
   level: number;
@@ -313,6 +318,9 @@ export interface Unit {
   footprintH?: number;
   footprintOffsets?: { dx: number; dy: number }[];
   shock: { dice: number; faces: number; bonus: number } | null;
+  /** Enemy-only Choque charges (weaker Relâmpago). Not a player tier — see shockChargesFor.
+   * Distinct from `shock` above, which is Relâmpago's echo DoT. */
+  shockCharges: number;
   diseased: boolean;
   diseaseBase: { atk: number; mag: number; def: number; res: number; mov: number } | null;
   /** Caustic Venom residue: 1D4 damage at the start of every one of this unit's own turns
@@ -577,6 +585,8 @@ export interface GameArt {
   causticVenomCore: HTMLImageElement;
   /** Ultra-realistic travelling arrow. */
   arrowCore: HTMLImageElement;
+  /** Photoreal Relâmpago cores (flicker set). Additive-blend on black. */
+  lightningCores: HTMLImageElement[];
   /** Optional full-canvas backdrop, keyed by mission id. */
   backdrops: Record<string, HTMLImageElement>;
 }
@@ -609,6 +619,8 @@ export interface BattleUnitSnap {
   weaponId: string | null;
   weaponEnh: number;
   shock: { dice: number; faces: number; bonus: number } | null;
+  /** Enemy-only Choque charges. Distinct from `shock` (Relâmpago echo DoT). */
+  shockCharges: number;
   diseased: boolean;
   diseaseBase: { atk: number; mag: number; def: number; res: number; mov: number } | null;
   poisoned: boolean;

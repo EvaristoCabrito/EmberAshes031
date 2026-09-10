@@ -6,7 +6,7 @@ import { installAudioUnlock, playFile, playMenuMusic, playTheme, resumeAudio, se
 import { BattleCanvas } from "./BattleCanvas";
 import { InnScreen } from "./InnScreen";
 import { PartyInventoryOverlay, ItemTip } from "./InventoryScreens";
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, CURE_DISEASE, CURES, DECORATIONS, DOUBLE_STRIKE, doubleStrikeFormula, EQUIPMENT, EXP_TO_LEVEL, FIREBALL, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LONG_SHOT, longShotFormula, MAGIC_MISSILE, PIERCING, piercingMul, PIERCING_THRUST, MAX_LEVEL, POTIONS, POTION_LOOT_WEIGHT, PROMOTE_LEVEL, PROMOTED_BASE, PROMOTIONS, SUMMON_FAMILIAR, SWEEP, TRIP, TERRAIN, WEAPONS, WEAPON_MAX_ENH, WEB_OF_DREAMS, BAG_MAX, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, barricadeDecor, decorationCells, placedFootprint, decorationImage, diceFormula, emberForKill, enemyLevelFor, equippedPouchId, fireballFormula, healFormula, lightningFormula, dressMap, isSummonClass, MUSIC_TRACKS, SUMMON_CLASSES, parseLayout, potionLabel, potionTooltip, lockpickTooltip, pouchIcon, rangeLabel, sheetLine, spellFormula, spellTier, spellUseGains, startingBags, statsFor, terrainNote, tierKey, tierUses, weaponEnhCost, weaponSellValue, equipmentFitsSlot, MULTI_SHOT, multiShotFormula, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, STAMPEDE, stampedeFormula, type SpellTier } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, CURE_DISEASE, CURES, DECORATIONS, DOUBLE_STRIKE, doubleStrikeFormula, EQUIPMENT, EXP_TO_LEVEL, FIREBALL, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, MAGIC_MISSILE, PIERCING, piercingMul, PIERCING_THRUST, MAX_LEVEL, POTIONS, POTION_LOOT_WEIGHT, PROMOTE_LEVEL, PROMOTED_BASE, PROMOTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, TERRAIN, WEAPONS, WEAPON_MAX_ENH, WEB_OF_DREAMS, BAG_MAX, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, barricadeDecor, decorationCells, placedFootprint, decorationImage, diceFormula, emberForKill, enemyLevelFor, equippedPouchId, fireballFormula, healFormula, lightningFormula, lightningTier3Formula, dressMap, isSummonClass, MUSIC_TRACKS, SUMMON_CLASSES, parseLayout, potionLabel, potionTooltip, lockpickTooltip, pouchIcon, rangeLabel, sheetLine, spellFormula, spellTier, spellUseGains, startingBags, statsFor, terrainNote, tierKey, tierUses, weaponEnhCost, weaponSellValue, equipmentFitsSlot, MULTI_SHOT, multiShotFormula, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, STAMPEDE, stampedeFormula, type SpellTier } from "./data";
 import { BattleEngine } from "./engine";
 import { MapPreviewCanvas, type PreviewUnitSelection } from "./MapPreviewCanvas";
 import { WorldMapScreen } from "./WorldMapScreen";
@@ -248,6 +248,7 @@ const HOTBAR_KEY = "ember-hotbar-v1";
 const PRESTIGE_SPELLS: Partial<Record<ClassId, SpellKind[]>> = {
   paladin: ["cureLight", "auraOfProtection", "divineWrath"],
   heavyKnight: ["shoulderSmash", "intimidatingPresence", "stampede"],
+  elementalist: ["lightningTier3"],
 };
 
 function classSpells(classId: ClassId): SpellKind[] {
@@ -316,6 +317,10 @@ function slotIcon(action: SlotAction): string {
       return "/game/icons/caustic-venom.png?v=ds2";
     case "lightning":
       return "/game/icons/lightning.png?v=ds2";
+    case "lightningTier3":
+      return "/game/icons/lightning.png?v=ds2";
+    case "shock":
+      return "/game/icons/lightning.png?v=ds2";
     case "magicMissile":
       return "/game/icons/magic-missile.png?v=ds2";
     case "longShot":
@@ -372,6 +377,10 @@ function slotLabel(action: SlotAction): string {
       return CAUSTIC_VENOM.name;
     case "lightning":
       return LIGHTNING.name;
+    case "lightningTier3":
+      return LIGHTNING_T3.name;
+    case "shock":
+      return SHOCK.name;
     case "magicMissile":
       return MAGIC_MISSILE.name;
     case "longShot":
@@ -1508,6 +1517,7 @@ const SKILL_CLASS: Partial<Record<SpellKind, ClassId>> = {
   cleave: "swordsman",
   magicMissile: "mage",
   lightning: "mage",
+  lightningTier3: "elementalist",
   fireball: "mage",
   causticVenom: "mage",
   summonFamiliar: "conjurer",
@@ -1559,6 +1569,13 @@ const SKILL_DAMAGE_ROWS: { name: string; cls: ClassId; tier: SpellTier; formula:
     note: `Atravessa cobertura e barricadas. Eco em outro alvo adjacente: ${diceFormula(LIGHTNING.echoDice, LIGHTNING.echoFaces, LIGHTNING.echoBonus)}.`,
   },
   {
+    name: LIGHTNING_T3.name,
+    cls: SKILL_CLASS.lightningTier3!,
+    tier: spellTier("lightningTier3")!,
+    formula: (mag: number) => lightningTier3Formula(mag),
+    note: `Elementalista T5. Atravessa cobertura e barricadas. Eco ${diceFormula(LIGHTNING_T3.echoDice, LIGHTNING_T3.echoFaces, LIGHTNING_T3.echoBonus)}.`,
+  },
+  {
     name: PIERCING.name,
     cls: SKILL_CLASS.piercing!,
     tier: spellTier("piercing")!,
@@ -1575,13 +1592,13 @@ const SKILL_DAMAGE_ROWS: { name: string; cls: ClassId; tier: SpellTier; formula:
     param: "level" as const,
     note: `Atinge até ${CLEAVE.hexes} hexes. x${CLEAVE.largeMul} em criaturas grandes (${CLEAVE.largeHexes}+ hexes). Dado sobe nos níveis 9, 11 e 14.`,
   },
-  { name: SWEEP.name, cls: SKILL_CLASS.sweep!, tier: spellTier("sweep")!, formula: "dano de arma", note: `Todos os inimigos adjacentes; empurra ${SWEEP.knockback} hex.` },
+  { name: SWEEP.name, cls: SKILL_CLASS.sweep!, tier: spellTier("sweep")!, formula: "dano de arma", note: `Inimigos a até ${SWEEP.radius} hexes; empurra ${SWEEP.knockback} hex. Prévia da área antes de confirmar.` },
   {
     name: WEB_OF_DREAMS.name,
     cls: SKILL_CLASS.webOfDreams!,
     tier: spellTier("webOfDreams")!,
     formula: "—",
-    note: `${Math.round(WEB_OF_DREAMS.sleepChance * 100)}% de dormir por ${diceFormula(WEB_OF_DREAMS.sleepDice, WEB_OF_DREAMS.sleepFaces, 0)} turnos (+${Math.round(WEB_OF_DREAMS.sleepBonusDamage * 100)}% dano ao acordar); prende o movimento a 1 hex na área por ${WEB_OF_DREAMS.durationRounds} turnos.`,
+    note: `Alcance ${WEB_OF_DREAMS.range}. Raio ${WEB_OF_DREAMS.size} (2 no nível 7, 3 no nível 12). ${Math.round(WEB_OF_DREAMS.sleepChance * 100)}% de dormir por ${diceFormula(WEB_OF_DREAMS.sleepDice, WEB_OF_DREAMS.sleepFaces, 0)} turnos (+${Math.round(WEB_OF_DREAMS.sleepBonusDamage * 100)}% dano ao acordar); prende o movimento a 1 hex na área por ${WEB_OF_DREAMS.durationRounds} turnos.`,
   },
   { name: TRIP.name, cls: SKILL_CLASS.trip!, tier: spellTier("trip")!, formula: `arma +${diceFormula(1, TRIP.bonusFaces, TRIP.bonusBonus)}`, note: `Atordoa ${TRIP.stunRounds} turnos; −${Math.round(TRIP.statPenalty * 100)}% de status pro resto da batalha.` },
   {
@@ -1591,14 +1608,14 @@ const SKILL_DAMAGE_ROWS: { name: string; cls: ClassId; tier: SpellTier; formula:
     formula: (mag: number) => fireballFormula(mag),
     note: `Área de raio ${FIREBALL.size}.`,
   },
-  { name: CURE_DISEASE.name, cls: SKILL_CLASS.cureDisease!, tier: spellTier("cureDisease")!, formula: "—", note: "Cura doença." },
+  { name: CURE_DISEASE.name, cls: SKILL_CLASS.cureDisease!, tier: spellTier("cureDisease")!, formula: "—", note: "Clériga T3. Cura doença e veneno. Luz teal." },
   {
     name: CAUSTIC_VENOM.name,
     cls: SKILL_CLASS.causticVenom!,
     tier: spellTier("causticVenom")!,
     formula: (mag: number) =>
       `centro ${spellFormula(mag, CAUSTIC_VENOM.centerMul, CAUSTIC_VENOM.centerDice, CAUSTIC_VENOM.centerFaces, CAUSTIC_VENOM.centerBonus)} · respingo ${spellFormula(mag, CAUSTIC_VENOM.splashMul, CAUSTIC_VENOM.splashDice, CAUSTIC_VENOM.splashFaces, CAUSTIC_VENOM.splashBonus)}`,
-    note: `Envenena: 1D4 no início de cada turno do alvo, até curado. Área de raio ${CAUSTIC_VENOM.size}, pega os dois lados.`,
+    note: `Alcance ${CAUSTIC_VENOM.range}. Envenena: 1D4 no início de cada turno do alvo, até curado. Área de raio ${CAUSTIC_VENOM.size}, pega os dois lados.`,
   },
   {
     name: MULTI_SHOT.name,
@@ -4434,6 +4451,11 @@ function BattleScreen({
       case "lightning":
         engine.startLightning();
         break;
+      case "lightningTier3":
+        engine.startLightningTier3();
+        break;
+      case "shock":
+        break;
       case "magicMissile":
         engine.startMagicMissile();
         break;
@@ -5190,6 +5212,15 @@ function StatusPanel({ unit, bagIcon, onClose, onOpenInventory, onOpenEquipment 
                           <p className="text-xs truncate">
                             {CAUSTIC_VENOM.name} {diceFormula(CAUSTIC_VENOM.centerDice, CAUSTIC_VENOM.centerFaces, CAUSTIC_VENOM.centerBonus)}{" "}
                             <span className="tabular-nums text-muted">×{unit.spells[tierKey(spellTier("causticVenom")!)]}</span>
+                          </p>
+                        </div>
+                      )}
+                      {unit.classId === "elementalist" && unit.spells[tierKey(spellTier("lightningTier3")!)] > 0 && (
+                        <div className="flex items-center gap-1.5 bg-bg border border-border rounded-md px-2 py-1.5">
+                          <img src="/game/icons/lightning.png?v=ds2" alt="" className="size-5 rounded-sm object-cover shrink-0" />
+                          <p className="text-xs truncate">
+                            {LIGHTNING_T3.name} {lightningTier3Formula(unit.mag)}{" "}
+                            <span className="tabular-nums text-muted">×{unit.spells[tierKey(spellTier("lightningTier3")!)]}</span>
                           </p>
                         </div>
                       )}

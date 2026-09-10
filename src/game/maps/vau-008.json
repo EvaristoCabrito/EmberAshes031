@@ -824,6 +824,13 @@
         "level": 10
       },
       {
+        "name": "Aldric",
+        "classId": "lancer",
+        "x": 5,
+        "y": 12,
+        "level": 10
+      },
+      {
         "name": "Neera",
         "classId": "archer",
         "x": 6,
@@ -834,6 +841,13 @@
         "name": "Voss",
         "classId": "mage",
         "x": 8,
+        "y": 12,
+        "level": 10
+      },
+      {
+        "name": "Malrec",
+        "classId": "conjurer",
+        "x": 10,
         "y": 12,
         "level": 10
       }

@@ -248,6 +248,7 @@ function cleanBattleUnit(raw: unknown): BattleUnitSnap | null {
     weaponId: typeof u.weaponId === "string" && WEAPONS[u.weaponId] ? u.weaponId : null,
     weaponEnh: clampInt(u.weaponEnh, 0, 5),
     shock,
+    shockCharges: clampInt(u.shockCharges, 0, 9),
     diseased: u.diseased === true,
     diseaseBase,
     poisoned: u.poisoned === true,
