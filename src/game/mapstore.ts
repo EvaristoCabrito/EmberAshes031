@@ -59,6 +59,9 @@ export interface MapDraft {
   /** Art variant per tile (same indexing as tiles) — which numbered version (001, 002,
    * ...) paints there. Defaults to 0 (the "001" file, safe for existing missions). */
   tileVariants: number[];
+  /** Ground restored beneath removable terrain props. Set by “Substituir base”. */
+  baseTile?: TerrainId;
+  baseVariant?: number;
   /** How far each tile is turned, in sixths of a circle (same indexing as tiles). Optional:
    * a map saved before hex rotation existed has no such key, read as "none turned". */
   tileRots?: number[];

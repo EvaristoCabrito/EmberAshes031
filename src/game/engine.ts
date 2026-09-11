@@ -5197,7 +5197,7 @@ export class BattleEngine {
   }
 
   /** Editor-only overlay: show the footprint of the decoration brush in the live preview. */
-  drawDecorationHighlight(ctx: CanvasRenderingContext2D, decorationId: string): void {
+  drawDecorationHighlight(ctx: CanvasRenderingContext2D, decorationId: string, selected?: { x: number; y: number; rot?: number }): void {
     const tile = this.layout.tile;
     ctx.save();
     ctx.lineWidth = Math.max(2, tile * 0.075);
@@ -5207,6 +5207,7 @@ export class BattleEngine {
     ctx.shadowBlur = Math.max(7, tile * 0.32);
     for (const placement of this.decorations) {
       if (placement.id !== decorationId) continue;
+      if (selected && (placement.x !== selected.x || placement.y !== selected.y || (placement.rot ?? 0) !== (selected.rot ?? 0))) continue;
       for (const cell of placedFootprint(placement)) {
         const { cx, cy } = this.hexCenter(placement.x + cell.dx, placement.y + cell.dy);
         this.hexPath(ctx, cx, cy, tile * 0.91);
@@ -5334,7 +5335,13 @@ export class BattleEngine {
 
   /** Multi-hex terrain props draw as one image over their whole footprint's bounding box,
    * not hex-clipped like regular tiles — they don't need to fill the exact hex shape. */
-  private drawDecorations(ctx: CanvasRenderingContext2D, tile: number, cssW: number, cssH: number): void {
+  private drawDecorations(
+    ctx: CanvasRenderingContext2D,
+    tile: number,
+    cssW: number,
+    cssH: number,
+    layer: "ground" | "behind" | "front" = "ground",
+  ): void {
     const SQRT3 = Math.sqrt(3);
     for (const p of this.decorations) {
       const def = DECORATIONS[p.id];
@@ -5344,7 +5351,8 @@ export class BattleEngine {
         if (!img.src) img.src = decorationImage(p.id);
         this.art.decorations[p.id] = img;
       }
-      if (!def || !img) continue;
+      const decorLayer = def?.unitLayer ?? (def?.foreground ? "front" : "ground");
+      if (!def || !img || decorLayer !== layer) continue;
       let minDx = 0;
       let maxDx = 0;
       let minDy = 0;
@@ -5388,7 +5396,7 @@ export class BattleEngine {
                 : one
                   ? tile * 1.55
                   : tile * SQRT3 * (maxDx - minDx + 1.7);
-      const h = tree
+      const baseH = tree
         ? tile * 2.55
         : log
           ? tile * 0.82
@@ -5401,7 +5409,10 @@ export class BattleEngine {
                 : one
                   ? tile * 1.65
                   : tile * (1.5 * (maxDy - minDy) + 2.3);
-      const dy = tree ? -tile * 0.55 : wall ? -tile * 0.12 : house ? -tile * 0.28 : item ? tile * 0.08 : 0;
+      const h = baseH * (def.heightScale ?? 1);
+      // Taller near-side props rise upward from their ground anchor instead of stretching
+      // equally in both directions. That preserves the shallow isometric perspective.
+      const dy = (tree ? -tile * 0.55 : wall ? -tile * 0.12 : house ? -tile * 0.28 : item ? tile * 0.08 : 0) - (h - baseH) * 0.42;
       // Facing art if the prop has it, the way isometric games do it: a drawing per facing,
       // mirrored to cover the opposite one. Only when a facing has no drawing do we fall
       // back to turning the bitmap, which tilts rather than faces and is a placeholder.
@@ -5494,7 +5505,7 @@ export class BattleEngine {
     const base =
       u.classId === "horror" || u.classId === "asherah" || u.classId === "troll" || u.classId === "ancientGolem"
         ? 2.0
-        : u.sprite === "kael" || u.classId === "mage" || u.classId === "cultist" || u.classId === "healer"
+        : u.sprite === "kael" || u.sprite === "kaelEarly" || u.classId === "mage" || u.classId === "cultist" || u.classId === "healer"
           ? 1.7
           : isBossClass(u.classId)
             ? 1.75
@@ -5587,7 +5598,7 @@ export class BattleEngine {
       };
     }
     const heavy = u.size >= 4 ? 1.4 : u.size === 2 ? 1.12 : 1;
-    if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval" || u.sprite === "conjurer" || u.size >= 4) {
+    if (u.sprite === "kael" || u.sprite === "kaelEarly" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval" || u.sprite === "conjurer" || u.size >= 4) {
       return { bob: 0, sway: 0, breath: 0 };
     }
     const bob = Math.sin(t * 1.55) * (1.15 * heavy);
@@ -5963,6 +5974,10 @@ export class BattleEngine {
       }
     }
 
+    // A rear parapet must remain visible over the ground and tactical highlights, while
+    // character sprites still pass in front of it.
+    this.drawDecorations(ctx, tile, cssW, cssH, "behind");
+
     const cell = tile * sqrt3;
     const sorted = [...this.units].sort((a, b) => a.drawY - b.drawY || a.drawX - b.drawX);
     for (const u of sorted) {
@@ -6030,7 +6045,7 @@ export class BattleEngine {
       // them would put the spear/staff on the wrong side. Idle still flips.
       const dirAction = (u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval") && (atk != null || moving);
       const flip = dirAction ? 1 : u.facing;
-      if (u.sprite === "kael" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval" || u.sprite === "conjurer") ctx.scale(flip, 1);
+      if (u.sprite === "kael" || u.sprite === "kaelEarly" || u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval" || u.sprite === "conjurer") ctx.scale(flip, 1);
       else ctx.scale(flip * (1 - breath * 0.22), 1 + breath);
       if (u.levelGlow > 0) {
         const pulse = 0.75 + Math.sin(this.time * 7) * 0.25;
@@ -6611,6 +6626,10 @@ export class BattleEngine {
     }
 
     this.drawHolyFx(ctx, tile);
+
+    // Foreground parapets are the nearest scenery: no unit, HP bar, projectile, or spell
+    // effect that is physically behind their artwork may show through.
+    this.drawDecorations(ctx, tile, cssW, cssH, "front");
 
     if (shake) ctx.restore();
   }

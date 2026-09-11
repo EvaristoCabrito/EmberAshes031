@@ -478,7 +478,7 @@ export function GameApp() {
         return [mission];
       }),
     );
-    return [...ordered, ...ALL_MISSIONS.filter((mission) => !used.has(mission.id))];
+    return ordered;
   }, [campaignLocations]);
   const [testMode, setTestMode] = useState(false);
   const [testEmber, setTestEmber] = useState(TEST_EMBER);
@@ -810,7 +810,9 @@ export function GameApp() {
   const beginMission = () => {
     if (!missionId) return;
     bootAudio();
-    if (missionId === "templo") {
+    // Cinematics are bound to a mission id, never its campaign position. Moving or adding
+    // chapters therefore cannot detach this scene from Aldeia Queimada.
+    if (missionId === "templo" || missionId === "aldeia") {
       setScreen("cutscene");
       return;
     }
@@ -1121,7 +1123,11 @@ export function GameApp() {
       )}
 
       {screen === "cutscene" && (
-        <CutsceneScreen src="/game/asherah-rite.mp4" muted={muted} onSkip={() => startBattle("templo")} />
+        <CutsceneScreen
+          src={missionId === "aldeia" ? "/game/aldeia-intro.mp4" : "/game/asherah-rite.mp4"}
+          muted={muted}
+          onSkip={() => startBattle(missionId === "aldeia" ? "aldeia" : "templo")}
+        />
       )}
 
       {screen === "epilogue" && (
@@ -1973,6 +1979,15 @@ function normalizeScenarioId(value: string): string {
   return id || "scenario";
 }
 
+/** Finds the ground that should reappear when a terrain-changing decoration is removed.
+ * Old maps created before “Substituir base” retain their own first tile as a safe fallback. */
+function baseForDraft(d: MapDraft): { tile: TerrainId; variant: number } {
+  const tile = d.baseTile ?? d.tiles[0] ?? "plains";
+  const maxVariant = Math.max(1, TILE_VARIANT_COUNT[tile] ?? 1) - 1;
+  const candidate = d.baseVariant ?? d.tileVariants[0] ?? 0;
+  return { tile, variant: Math.max(0, Math.min(maxVariant, candidate)) };
+}
+
 function blankDraft(): MapDraft {
   return {
     id: `custom-${Date.now().toString(36)}`,
@@ -1989,6 +2004,8 @@ function blankDraft(): MapDraft {
     rows: EDITOR_ROWS_DEFAULT,
     tiles: Array.from({ length: EDITOR_COLS_DEFAULT * EDITOR_ROWS_DEFAULT }, () => "plains" as TerrainId),
     tileVariants: Array.from({ length: EDITOR_COLS_DEFAULT * EDITOR_ROWS_DEFAULT }, () => 0),
+    baseTile: "plains",
+    baseVariant: 0,
     tileRots: Array.from({ length: EDITOR_COLS_DEFAULT * EDITOR_ROWS_DEFAULT }, () => 0),
     music: "",
     decorations: [],
@@ -1997,6 +2014,7 @@ function blankDraft(): MapDraft {
     neutralSpawns: [],
   };
 }
+
 
 /** Loads an existing campaign mission into the editor, targeting that same mission's id —
  * so saved versions stack up under it and "Ativar" can make one of them live for that
@@ -2311,12 +2329,14 @@ function ResizableEditorPanel({
   style,
   title,
   minHeight,
+  contentClassName = "h-full w-full",
 }: {
   children: ReactNode;
   className: string;
   style?: CSSProperties;
   title: string;
   minHeight: number;
+  contentClassName?: string;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const resizeStart = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -2347,7 +2367,7 @@ function ResizableEditorPanel({
 
   return (
     <div ref={panelRef} className={`relative shrink-0 ${className}`} style={{ ...style, ...(size ?? {}) }} title={title}>
-      {children}
+      <div className={contentClassName}>{children}</div>
       <button
         type="button"
         className="absolute bottom-0 right-0 z-10 grid size-8 touch-none place-items-center rounded-tl-md border-l border-t border-border bg-bg/90 text-muted cursor-se-resize"
@@ -2402,6 +2422,8 @@ function MapEditorScreen({
   const [turning, setTurning] = useState(false);
   const [turningDeco, setTurningDeco] = useState(false);
   const [decoBrush, setDecoBrush] = useState<string>(Object.keys(DECORATIONS)[0]!);
+  // A placed prop is selected by clicking any hex of its footprint; Delete removes this exact placement.
+  const [selectedPlacedDecoration, setSelectedPlacedDecoration] = useState<{ id: string; x: number; y: number; rot?: number } | null>(null);
   const [decoSection, setDecoSection] = useState("Todas");
   const [mode, setMode] = useState<"paint" | "player" | "enemy" | "summon" | "decoration">("paint");
   // Which summon class the "Invocação" brush drops. Summons live in playerSpawns alongside
@@ -2461,6 +2483,7 @@ function MapEditorScreen({
         setNote(`Não deu pra gravar a ordem: ${body.error ?? `HTTP ${res.status}`}`);
         return;
       }
+      window.dispatchEvent(new CustomEvent("ember:locations-saved", { detail: { missionOrder: next, locationOrder } }));
       setNote("Ordem das missões atualizada em src/game/map-order.json.");
     } catch (err) {
       setNote(`Sem servidor de dev — ordem não gravada (${err instanceof Error ? err.message : String(err)}).`);
@@ -2551,7 +2574,29 @@ function MapEditorScreen({
     }
   }, []);
   useEffect(() => { void refreshSavedLocationMaps(); }, [refreshSavedLocationMaps]);
-
+  // Locais is the campaign list. A saved map becomes playable only after it is added
+  // to a Local; saved-but-unassigned maps remain available below solely for assignment.
+  const campaignIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const locationId of locationOrder) {
+      const fallback = ALL_LOCATIONS.find((location) => location.id === locationId)?.missionIds ?? [];
+      for (const id of order[locationId] ?? fallback) ids.add(id);
+    }
+    return ids;
+  }, [order, locationOrder]);
+  // The campaign is filtered by Locais. The editor also exposes the two prepared
+  // reserve maps (R1 and R2), so they can be edited or assigned later without playing.
+  const campaignMapReferences = useMemo(() => {
+    const known = new Map<string, { id: string; title: string; index: number }>();
+    for (const id of [...campaignIds, "vertente", "portao"]) {
+      const mission = missionById(id);
+      if (mission && !mission.hub) known.set(id, { id, title: mission.title, index: mission.index });
+    }
+    // New saved maps remain available here so they can be assigned to a Local.
+    for (const map of savedLocationMaps) if (!known.has(map.id)) known.set(map.id, map);
+    return [...known.values()].sort((a, b) => a.index - b.index || byName(a.title, b.title));
+  }, [campaignIds, savedLocationMaps]);
+  const campaignLoadOptions = campaignMapReferences;
   const [slots, setSlots] = useState<Record<string, number>>(LOCATION_SLOTS);
 
   /** Declares how many missions a location is meant to hold, so the editor can show what
@@ -2669,6 +2714,8 @@ function MapEditorScreen({
     const selectedVariant = Math.min(variant, (TILE_VARIANT_COUNT[brush] ?? 1) - 1);
     setDraft((d) => ({
       ...d,
+      baseTile: brush,
+      baseVariant: selectedVariant,
       tiles: Array.from({ length: d.cols * d.rows }, () => brush),
       tileVariants: Array.from({ length: d.cols * d.rows }, () => selectedVariant),
       tileRots: Array.from({ length: d.cols * d.rows }, () => 0),
@@ -2761,11 +2808,13 @@ function MapEditorScreen({
         }
       }
       const tiles = [...d.tiles];
+      const tileVariants = [...d.tileVariants];
+      const tileRots = [...(d.tileRots ?? [])];
       if (def.tile) {
-        const floor: TerrainId = d.tiles.includes("nave") ? "nave" : "plains";
+        const base = baseForDraft(d);
         for (const f of before) {
           const i = cellIndex(hit.x + f.dx, hit.y + f.dy, d.cols, d.rows);
-          if (i >= 0 && tiles[i] === def.tile) tiles[i] = floor;
+          if (i >= 0 && tiles[i] === def.tile) { tiles[i] = base.tile; tileVariants[i] = base.variant; tileRots[i] = 0; }
         }
         for (const f of after) {
           const i = cellIndex(hit.x + f.dx, hit.y + f.dy, d.cols, d.rows);
@@ -2773,36 +2822,64 @@ function MapEditorScreen({
         }
       }
       setNote(`${def.name} em ${hit.x},${hit.y}: girada para ${turned.rot * 60}°${turned.rot === 0 ? " (de volta ao original)" : ""}.`);
-      return { ...d, tiles, decorations: d.decorations.map((p) => (p === hit ? turned : p)) };
+      return { ...d, tiles, tileVariants, tileRots, decorations: d.decorations.map((p) => (p === hit ? turned : p)) };
     });
   };
 
-  const toggleDecoration = (x: number, y: number) => {
+  const removeSelectedDecoration = useCallback(() => {
+    const selected = selectedPlacedDecoration;
+    if (!selected) {
+      setNote("Clique em qualquer hex da decoração e então pressione Delete.");
+      return;
+    }
     setDraft((d) => {
-      const covered = decorationCells(d.decorations);
-      // clicking any hex a decoration already covers removes that whole placement,
-      // regardless of which cell of its footprint was clicked
-      const hit = d.decorations.find((p) => placedFootprint(p).some((f) => p.x + f.dx === x && p.y + f.dy === y));
-      // A decoration is art; the tile under it carries every rule. So the tile is laid with
-      // the prop and lifted with it, and the two cannot drift apart: a house prop over
-      // plains would look climbable and be flat ground.
-      const floor: TerrainId = d.tiles.includes("nave") ? "nave" : "plains";
-      if (hit) {
-        const hitDef = DECORATIONS[hit.id];
-        const tiles = [...d.tiles];
-        if (hitDef?.tile) {
-          for (const f of placedFootprint(hit)) {
-            const i = cellIndex(hit.x + f.dx, hit.y + f.dy, d.cols, d.rows);
-            if (i >= 0 && tiles[i] === hitDef.tile) tiles[i] = floor;
-          }
-        }
-        return { ...d, tiles, decorations: d.decorations.filter((p) => p !== hit) };
+      const hit = d.decorations.find((p) => p.id === selected.id && p.x === selected.x && p.y === selected.y && (p.rot ?? 0) === (selected.rot ?? 0));
+      if (!hit) {
+        setNote("Essa decoração já não está no mapa.");
+        return d;
       }
+      const hitDef = DECORATIONS[hit.id];
+      const tiles = [...d.tiles];
+      const tileVariants = [...d.tileVariants];
+      const tileRots = [...(d.tileRots ?? [])];
+      const base = baseForDraft(d);
+      if (hitDef?.tile) {
+        for (const f of placedFootprint(hit)) {
+          const i = cellIndex(hit.x + f.dx, hit.y + f.dy, d.cols, d.rows);
+          if (i >= 0 && tiles[i] === hitDef.tile) { tiles[i] = base.tile; tileVariants[i] = base.variant; tileRots[i] = 0; }
+        }
+      }
+      setNote(`${hitDef?.name ?? hit.id} removida.`);
+      return { ...d, tiles, tileVariants, tileRots, decorations: d.decorations.filter((p) => p !== hit) };
+    });
+    setSelectedPlacedDecoration(null);
+  }, [selectedPlacedDecoration, setNote]);
+
+  useEffect(() => {
+    const onEditorDelete = (event: KeyboardEvent) => {
+      if (event.key !== "Delete") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable=true]")) return;
+      event.preventDefault();
+      removeSelectedDecoration();
+    };
+    window.addEventListener("keydown", onEditorDelete);
+    return () => window.removeEventListener("keydown", onEditorDelete);
+  }, [removeSelectedDecoration]);
+  const toggleDecoration = (x: number, y: number) => {
+    const clicked = draft.decorations.find((p) => placedFootprint(p).some((f) => p.x + f.dx === x && p.y + f.dy === y));
+    if (clicked) {
+      const clickedDef = DECORATIONS[clicked.id];
+      setSelectedPlacedDecoration({ id: clicked.id, x: clicked.x, y: clicked.y, rot: clicked.rot });
+      setNote(`${clickedDef?.name ?? clicked.id} selecionada. Pressione Delete para remover.`);
+      return;
+    }
+    setDraft((d) => {
       const def = DECORATIONS[decoBrush];
       if (!def) return d;
-      // A prop may hang off the edge — half a ridge or a cave mouth running past the last
-      // hex is the point. Only another prop blocks it; the cells beyond the board simply
-      // have no tile to stamp.
+      const covered = decorationCells(d.decorations);
+      // A new prop always stays where it was clicked. Parapets do not choose a new
+      // position by themselves; only their ordinary horizontal footprint is occupied.
       for (const f of def.footprint) {
         if (covered.has(`${x + f.dx},${y + f.dy}`)) return d;
       }
@@ -2813,11 +2890,11 @@ function MapEditorScreen({
           if (i >= 0) tiles[i] = def.tile;
         }
       }
-      return { ...d, tiles, decorations: [...d.decorations, { id: decoBrush, x, y }] };
-      
+      const placed = { id: decoBrush, x, y };
+      setSelectedPlacedDecoration(placed);
+      return { ...d, tiles, decorations: [...d.decorations, placed] };
     });
   };
-
   const onCellClick = (x: number, y: number) => {
     const i = y * draft.cols + x;
     if (mode === "paint") {
@@ -2858,14 +2935,15 @@ function MapEditorScreen({
     cols = Math.max(3, Math.min(40, cols));
     rows = Math.max(3, Math.min(40, rows));
     setDraft((d) => {
+      const base = baseForDraft(d);
       const tiles: TerrainId[] = [];
       const tileVariants: number[] = [];
       const tileRots: number[] = [];
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const inOld = r < d.rows && c < d.cols;
-          tiles.push(inOld ? (d.tiles[r * d.cols + c] ?? "plains") : "plains");
-          tileVariants.push(inOld ? (d.tileVariants[r * d.cols + c] ?? 0) : 0);
+          tiles.push(inOld ? (d.tiles[r * d.cols + c] ?? base.tile) : base.tile);
+          tileVariants.push(inOld ? (d.tileVariants[r * d.cols + c] ?? base.variant) : base.variant);
           tileRots.push(inOld ? (d.tileRots?.[r * d.cols + c] ?? 0) : 0);
         }
       }
@@ -3085,13 +3163,16 @@ function MapEditorScreen({
   const summonOptions = [...SUMMON_CLASSES].sort((a, b) => byName(CLASSES[a].name, CLASSES[b].name));
   const decorOptions = Object.values(DECORATIONS).sort((a, b) => byName(a.name, b.name));
   const decorationSectionFor = (id: string) => {
+    if (id.startsWith("wilds-")) return "Wilds";
+    if (id.startsWith("torture-")) return "Torture";
+    if (id.startsWith("city-")) return "City";
     if (id.includes("bridge") || id.includes("ember-channels")) return "Pontes";
     if (id.includes("mountain") || id.includes("ridge") || id.includes("rock") || id.includes("boulder") || id.includes("spike") || id.includes("cliff")) return "Pedras e relevo";
     if (id.includes("tree") || id.includes("forest") || id.includes("wood") || id.includes("log") || id.includes("mossy")) return "Natureza";
     if (id.includes("ruined") || id.includes("tower") || id.includes("mansion") || id.includes("wall") || id.includes("gate") || id.includes("shrine") || id.includes("house") || id.includes("hut") || id.includes("hamlet")) return "Ruínas e construções";
     return "Objetos";
   };
-  const decorationSections = ["Todas", "Pontes", "Pedras e relevo", "Ruínas e construções", "Natureza", "Objetos"];
+  const decorationSections = ["Todas", "Pontes", "Wilds", "Torture", "City", "Pedras e relevo", "Ruínas e construções", "Natureza", "Objetos"];
   const visibleDecorOptions = decoSection === "Todas" ? decorOptions : decorOptions.filter((dec) => decorationSectionFor(dec.id) === decoSection);
 
   /** Whatever unit stands on a cell, across all three spawn lists. */
@@ -3176,20 +3257,23 @@ function MapEditorScreen({
             className="bg-bg border border-border rounded-md px-2 py-1.5"
             value=""
             onChange={(e) => {
-              const m = missionById(e.target.value);
+              const id = e.target.value;
+              const m = missionById(id) ?? (() => {
+                const saved = latestSavedDraft(id);
+                return saved ? draftToMission(saved) : undefined;
+              })();
               if (!m) return;
               setDraft(missionToDraft(m));
-              setNote(`Carregado "${m.title}" (${m.id}) da campanha — ${m.cols}x${m.rows}.`);
+              setNote(`Carregado "${m.title}" (${m.id}) no editor — ${m.cols}x${m.rows}.`);
             }}
           >
-            <option value="">Carregar da campanha…</option>
-            {ALL_MISSIONS.filter((m) => !m.hub).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.title}
+            <option value="">Carregar mapa da campanha ou reserva…</option>
+            {campaignLoadOptions.map((map) => (
+              <option key={map.id} value={map.id}>
+                {map.title}
               </option>
             ))}
-          </select>
-          {pickable.length > 0 && (
+          </select>          {pickable.length > 0 && (
             <select
               id="mapPick"
               className="flex-1 min-w-0 bg-bg border border-border rounded-md px-2 py-1.5"
@@ -3665,6 +3749,7 @@ function MapEditorScreen({
                 art={art}
                 onCellClick={onCellClick}
                 selectedDecorationId={mode === "decoration" ? decoBrush : undefined}
+                selectedPlacedDecoration={selectedPlacedDecoration}
                 selectedUnit={selectedPreviewUnit}
                 onUnitSelect={selectPreviewUnit}
                 onUnitPlace={placePreviewUnit}
@@ -3676,7 +3761,8 @@ function MapEditorScreen({
         )}
 
         <ResizableEditorPanel
-          className="ember-scrollbar overflow-auto border border-border rounded-md p-2 bg-black h-[60vh] min-h-[320px] min-w-[280px]"
+          className="overflow-hidden border border-border rounded-md p-2 bg-black h-[60vh] min-h-[320px] min-w-[280px]"
+          contentClassName="ember-scrollbar h-full w-full overflow-auto"
           title="Arraste esta alça para redimensionar o mapa"
           minHeight={320}
         >
@@ -4114,7 +4200,7 @@ function MapEditorScreen({
                               ...ids.map((id) =>
                                 id === draft.id
                                   ? draft.index
-                                  : missionById(id)?.index ?? savedLocationMaps.find((map) => map.id === id)?.index ?? -1,
+                                  : missionById(id)?.index ?? campaignMapReferences.find((map) => map.id === id)?.index ?? -1,
                               ),
                             ) + 1;
                           setDraft({
@@ -4138,15 +4224,15 @@ function MapEditorScreen({
                       <select
                         className="min-w-0 flex-1 bg-bg border border-border rounded px-1.5 py-1 text-xs"
                         value=""
-                        title="Coloca neste Local um mapa seu já salvo"
+                        title="Coloca neste Local um cenário da campanha ou um mapa seu já salvo"
                         onChange={(e) => {
                           const mapId = e.target.value;
                           e.target.value = "";
                           if (mapId) transferMission(mapId, loc.id);
                         }}
                       >
-                        <option value="">Adicionar mapa salvo…</option>
-                        {savedLocationMaps.filter((map) => !ids.includes(map.id)).map((map) => (
+                        <option value="">Adicionar cenário/mapa…</option>
+                        {campaignMapReferences.filter((map) => !ids.includes(map.id)).map((map) => (
                           <option key={map.id} value={map.id}>
                             {map.title} · {map.id}
                           </option>
@@ -4695,6 +4781,14 @@ function BattleScreen({
         )}
       </div>
 
+      {engine.mission.id === "vau" && !playtest && (
+        <aside className="pointer-events-none absolute z-20 inset-x-3 bottom-28 sm:bottom-32 flex justify-center" aria-label="Orientação inicial">
+          <p className="max-w-md rounded-lg border border-accent/60 bg-surface/95 px-3 py-2 text-center text-xs leading-relaxed text-fg shadow-lg">
+            <span className="font-medium text-accent">Primeira batalha:</span> clique no retrato para abrir status e equipamento. Clique na barra de HP para abrir o log de combate.
+          </p>
+        </aside>
+      )}
+
       <footer className="shrink-0 border-t border-border bg-surface px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <div className="min-h-16 sm:min-h-[4.5rem] flex items-center gap-2">
           {unit ? (
@@ -4703,7 +4797,7 @@ function BattleScreen({
                 type="button"
                 onClick={() => setShowStatus(true)}
                 className="shrink-0 rounded-md ring-offset-2 ring-offset-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent active:opacity-80"
-                title="Ver status"
+                title="Abrir status e equipamento" aria-label="Abrir status e equipamento"
               >
                 <img
                   src={HERO_PORTRAIT[unit.sprite] ?? `/game/sprites/${unit.sprite}/1.png`}
@@ -4719,7 +4813,7 @@ function BattleScreen({
                 type="button"
                 onClick={() => setShowLog((v) => !v)}
                 className="min-w-0 flex-1 text-left rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                title={showLog ? "Ver status" : "Ver log de combate"}
+                title={showLog ? "Fechar log e ver status" : "Abrir log de combate"} aria-label={showLog ? "Fechar log e ver status" : "Abrir log de combate"}
               >
                 {showLog ? (
                   <div ref={logRef} className="h-16 sm:h-20 overflow-y-auto pr-1">

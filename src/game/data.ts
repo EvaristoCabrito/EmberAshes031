@@ -71,9 +71,67 @@ export const FOOTPRINT_TYPE_7 = [
 
 const DECO_PAIR = [{ dx: 0, dy: 0 }, { dx: 1, dy: 0 }];
 const DECO_TRIO = [{ dx: 0, dy: 0 }, { dx: 1, dy: 0 }, { dx: 0, dy: -1 }];
+const DECO_ROW_TRIO = [{ dx: 0, dy: 0 }, { dx: 1, dy: 0 }, { dx: 2, dy: 0 }];
+const DECO_ROW_FIVE = [{ dx: 0, dy: 0 }, { dx: 1, dy: 0 }, { dx: 2, dy: 0 }, { dx: 3, dy: 0 }, { dx: 4, dy: 0 }];
 const DECO_QUAD = [{ dx: 0, dy: 0 }, { dx: 1, dy: 0 }, { dx: 2, dy: 0 }, { dx: 3, dy: 0 }];
 const DECO_ONE = [{ dx: 0, dy: 0 }];
 
+/** Props from the two supplied Wilds sheets. They remain manually placed editor art. */
+function decorationSet(entries: readonly (readonly [string, string])[], pairIds: ReadonlySet<string> = new Set()): Record<string, DecorationDef> {
+  return Object.fromEntries(entries.map(([id, name]) => [id, { id, name, footprint: pairIds.has(id) ? DECO_PAIR : DECO_ONE }]));
+}
+
+const WILDS_TWO_HEX = new Set([
+  "wilds-abandoned-cart",
+  "wilds-ancient-boulder",
+  "wilds-lichen-boulder",
+  "wilds-candle-menhir",
+]);
+const WILDS_DECORATIONS = decorationSet([
+  ["wilds-twisted-tree", "Árvore retorcida"],
+  ["wilds-mossy-shrine", "Oratório musgoso"],
+  ["wilds-lantern-post", "Poste com lanterna"],
+  ["wilds-ivy-arch", "Arco coberto de hera"],
+  ["wilds-palisade", "Paliçada antiga"],
+  ["wilds-ancient-boulder", "Pedra ancestral"],
+  ["wilds-fallen-log", "Tronco caído selvagem"],
+  ["wilds-campfire-cauldron", "Caldeirão de acampamento"],
+  ["wilds-broken-wheel", "Roda quebrada"],
+  ["wilds-ruined-wayside-shrine", "Santuário de estrada"],
+  ["wilds-weathered-signpost", "Placa de caminho"],
+  ["wilds-rope-bridge", "Ponte de corda"],
+  ["wilds-root-arch", "Arco de raízes"],
+  ["wilds-stone-steps", "Escadaria musgosa"],
+  ["wilds-wishing-well", "Poço antigo"],
+  ["wilds-gibbet-tree", "Árvore com gaiola"],
+  ["wilds-dead-oak", "Carvalho morto"],
+  ["wilds-gothic-arch", "Arco gótico em ruínas"],
+  ["wilds-lantern-signpost", "Marco com lanterna"],
+  ["wilds-lichen-boulder", "Rochedo com líquen"],
+  ["wilds-ivy-statue", "Estátua coberta de hera"],
+  ["wilds-abandoned-cart", "Carroça abandonada"],
+  ["wilds-candle-menhir", "Menir das velas"],
+  ["wilds-moss-bridge", "Ponte musgosa"],
+], WILDS_TWO_HEX);
+
+// Large cages, frames and the iron-maiden group from the upper reference band get
+// a two-hex footprint; smaller torture tools deliberately remain one hex.
+const TORTURE_TWO_HEX = new Set([
+  ...Array.from({ length: 15 }, (_, index) => `torture-gear-${String(index + 1).padStart(2, "0")}`),
+  "torture-gear-22",
+]);
+const TORTURE_DECORATIONS = decorationSet(
+  Array.from({ length: 44 }, (_, index) => {
+    const serial = String(index + 1).padStart(2, "0");
+    return [`torture-gear-${serial}`, `Equipamento de tortura ${serial}`] as const;
+  }),
+  TORTURE_TWO_HEX,
+);
+
+const CITY_TWO_HEX = new Set(["city-supply-cart", "city-covered-wagon"]);
+const CITY_DECORATIONS = decorationSet([
+  ["city-gate-banner", "Portão com estandarte"], ["city-palisade-banner", "Paliçada com estandarte"], ["city-spike-barricade-large", "Barricada de estacas grande"], ["city-spike-barricade", "Barricada de estacas"], ["city-palisade-frame", "Moldura de paliçada"], ["city-wooden-barricade", "Barricada de madeira"], ["city-banner-barricade", "Barricada com bandeira"], ["city-spike-barricade-low", "Estacas baixas"], ["city-wattle-fence", "Cerca trançada"], ["city-stone-banner-wall", "Muralha baixa com estandarte"], ["city-banner-post", "Mastro de estandarte"], ["city-lantern-post", "Poste de lanterna"], ["city-well", "Poço da cidade"], ["city-signpost", "Placa direcional"], ["city-market-stall", "Barraca de mercado"], ["city-supply-cart", "Carroça de suprimentos"], ["city-covered-wagon", "Carroça coberta"], ["city-covered-crate", "Caixa coberta"], ["city-workbench", "Bancada"], ["city-execution-block", "Bloco de execução"], ["city-provisions", "Mantimentos"], ["city-log-stack", "Pilha de lenha"], ["city-campfire", "Fogueira"], ["city-barrels", "Barris"], ["city-stool", "Banco de madeira"], ["city-shrine", "Oratório urbano"], ["city-stone-pillar", "Pilar de pedra"], ["city-notice-post", "Poste de avisos"], ["city-ring-pillar", "Pilar com argola"], ["city-brazier", "Braseiro"], ["city-clothesline", "Varal"], ["city-wheelbarrow", "Carrinho de mão"], ["city-gallows-cages", "Forca com gaiolas"],
+], CITY_TWO_HEX);
 // Multi-hex terrain props: rendered as one image over their whole footprint instead of
 // clipped per hex (see DecorationDef). Cropped from LargeHexes1-3.jpg.
 export const DECORATIONS: Record<string, DecorationDef> = {
@@ -81,7 +139,7 @@ export const DECORATIONS: Record<string, DecorationDef> = {
   "spike-rocks": { id: "spike-rocks", name: "Agulhas de Pedra", footprint: DECO_PAIR, tile: "column" },
   "dead-tree-large": { id: "dead-tree-large", name: "Árvore Morta Grande", footprint: DECO_PAIR, tile: "highwood" },
   "dense-forest": { id: "dense-forest", name: "Bosque Denso", footprint: DECO_PAIR, tile: "woods" },
-  "broken-cliff-wall": { id: "broken-cliff-wall", name: "Muralha Rochosa Partida", footprint: DECO_PAIR, tile: "column" },
+  "broken-cliff-wall": { id: "broken-cliff-wall", name: "Muralha Rochosa Partida", footprint: DECO_PAIR, tile: "column", repeatGroup: "broken-cliff-wall" },
   "boulder-cluster": { id: "boulder-cluster", name: "Amontoado de Pedras", footprint: DECO_TRIO, tile: "column" },
   "ruined-cottage": { id: "ruined-cottage", name: "Casa em Ruínas", footprint: DECO_PAIR },
   "broken-tower": { id: "broken-tower", name: "Torre Derrubada", footprint: DECO_PAIR },
@@ -89,10 +147,12 @@ export const DECORATIONS: Record<string, DecorationDef> = {
   "abandoned-mansion": { id: "abandoned-mansion", name: "Mansão Abandonada", footprint: DECO_TRIO },
   "stone-bridge": { id: "stone-bridge", name: "Ponte de Pedra", footprint: DECO_PAIR },
   // Long, repeatable transparent modules for the two outer edges of a bridge map.
-  "bridge-parapet-gothic-statues-001": { id: "bridge-parapet-gothic-statues-001", name: "Parapeito Gótico — Estátuas", footprint: DECO_QUAD },
-  "bridge-parapet-gothic-wall-001": { id: "bridge-parapet-gothic-wall-001", name: "Parapeito Gótico — Muralha", footprint: DECO_QUAD },
+  "bridge-parapet-gothic-statues-001": { id: "bridge-parapet-gothic-statues-001", name: "Parapeito Gótico — Estátuas", footprint: DECO_QUAD, foreground: true, unitLayer: "front", repeatGroup: "bridge-parapet-gothic-statues" },
+  "bridge-parapet-gothic-wall-001": { id: "bridge-parapet-gothic-wall-001", name: "Parapeito Gótico — Muralha", footprint: DECO_QUAD, unitLayer: "behind", repeatGroup: "bridge-parapet-gothic-wall" },
+  "bridge-parapet-tall-001": { id: "bridge-parapet-tall-001", name: "Tall-Parapeito", footprint: DECO_ROW_FIVE, unitLayer: "behind", repeatGroup: "bridge-parapet-tall", heightScale: 1.8 },
+  "bridge-parapet-tall-statues-001": { id: "bridge-parapet-tall-statues-001", name: "Tall-Parapeito — Estátuas", footprint: DECO_ROW_FIVE, foreground: true, unitLayer: "front", repeatGroup: "bridge-parapet-tall", heightScale: 1.8 },
   "ember-channels-001": { id: "ember-channels-001", name: "Canais de Brasa", footprint: DECO_PAIR },
-  "broken-wall-segment": { id: "broken-wall-segment", name: "Muralha em Ruínas", footprint: DECO_PAIR, tile: "column" },
+  "broken-wall-segment": { id: "broken-wall-segment", name: "Muralha em Ruínas", footprint: DECO_PAIR, tile: "column", repeatGroup: "broken-wall-segment" },
   gatehouse: { id: "gatehouse", name: "Portão Fortificado", footprint: DECO_PAIR },
   watchtower: { id: "watchtower", name: "Torre de Vigia", footprint: DECO_PAIR },
   "ancient-shrine": { id: "ancient-shrine", name: "Santuário Antigo", footprint: DECO_PAIR },
@@ -125,9 +185,15 @@ export const DECORATIONS: Record<string, DecorationDef> = {
   "rune-stone": { id: "rune-stone", name: "Menir Rúnico", footprint: DECO_ONE },
   "burning-hamlet": { id: "burning-hamlet", name: "Vilarejo em Chamas", footprint: DECO_PAIR },
   "boulder-mound": { id: "boulder-mound", name: "Monte de Pedras", footprint: DECO_ONE, tile: "column" },
-  "wooden-cart": { id: "wooden-cart", name: "Carroça de Madeira", footprint: DECO_ONE },
+  "wooden-cart": { id: "wooden-cart", name: "Carroça de Madeira", footprint: DECO_PAIR },
   "spike-crown": { id: "spike-crown", name: "Coroa de Espinhos", footprint: DECO_TRIO, tile: "column" },
+  ...WILDS_DECORATIONS,
+  ...TORTURE_DECORATIONS,
+  ...CITY_DECORATIONS,
 };
+
+/** These packs are editor art only: scenario generation never places them by accident. */
+const MANUAL_DECORATION_IDS = new Set([...Object.keys(WILDS_DECORATIONS), ...Object.keys(TORTURE_DECORATIONS), ...Object.keys(CITY_DECORATIONS)]);
 
 /** Every track in public/game/MUSIC, by file name, A-Z.
  *
@@ -680,6 +746,22 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     size: 1,
     init: 7,
   },
+  kaelEarly: {
+    id: "kaelEarly",
+    name: "Kael Early",
+    role: "Espadachim · versão inicial",
+    hp: 34,
+    atk: 9,
+    mag: 0,
+    def: 6,
+    res: 3,
+    mov: 5,
+    minRange: 1,
+    maxRange: 1,
+    sprite: "kaelEarly",
+    size: 1,
+    init: 7,
+  },
   conjurer: {
     id: "conjurer",
     name: "Conjurador",
@@ -928,6 +1010,7 @@ export const GROWTH: Record<ClassId, { hp: number; atk: number; mag: number; def
   lancer: { hp: 4, atk: 2, mag: 0, def: 2, res: 1 },
   sandoval: { hp: 5, atk: 3, mag: 0, def: 2, res: 1 },
   kaelFinal: { hp: 4, atk: 2, mag: 0, def: 2, res: 1 },
+  kaelEarly: { hp: 4, atk: 2, mag: 0, def: 2, res: 1 },
   // Same shape as mage's growth (atk/mag/def) but hp grows slower and res grows faster,
   // matching CLASSES.conjurer's base-stat deltas — see the note there.
   conjurer: { hp: 2, atk: 0, mag: 3, def: 1, res: 4 },
@@ -1222,7 +1305,7 @@ const ARCANE_CONJURER_TRIO: ClassId[] = ["conjurer", "sorcerer", "necromancer"];
 // Both arcane trios pool together: any arcane caster can wield any arcane staff, per design.
 const ARCANE_ALL: ClassId[] = [...ARCANE_MAGE_TRIO, ...ARCANE_CONJURER_TRIO];
 const HEAL_TRIO: ClassId[] = ["healer", "bishop", "cleric"];
-const WARRIOR_TRIO: ClassId[] = ["swordsman", "kaelFinal", "paladin", "heavyKnight"];
+const WARRIOR_TRIO: ClassId[] = ["swordsman", "kaelFinal", "kaelEarly", "paladin", "heavyKnight"];
 const ARCHER_TRIO: ClassId[] = ["archer", "ranger", "assassin"];
 const LANCER_TRIO: ClassId[] = ["lancer", "sandoval", "sentinel", "templar"];
 // Light armor: scouts, the warrior line, the lancer line, and the rogue. Front-liners
@@ -3636,7 +3719,7 @@ export function scatterDecor(m: Mission, excludeIds?: ReadonlySet<string>): Miss
   // The Map Editor lets the author opt specific props out of this pool (per direct
   // instruction) — a piece that's too distinctive to see scattered at random, without
   // pulling it out of DECORATIONS entirely and losing manual placement too.
-  const ids = Object.keys(DECORATIONS).filter((id) => id !== "locked-chest" && !excludeIds?.has(id));
+  const ids = Object.keys(DECORATIONS).filter((id) => id !== "locked-chest" && !MANUAL_DECORATION_IDS.has(id) && !excludeIds?.has(id));
   // Uncapped and generous: scenery is the thing a board should have lots of, and anything
   // unwanted is a click to clear.
   const want = Math.max(3, Math.round(((m.cols * m.rows) / 288) * 10));

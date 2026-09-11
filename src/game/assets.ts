@@ -56,7 +56,7 @@ export function tileVariantSrc(id: TerrainId, variant: number): string {
   return `/game/tiles/${tileVariantName(id, variant)}.png?v=55`;
 }
 const TILES = Object.keys(TILE_VARIANT_COUNT) as TerrainId[];
-const SPRITES: SpriteId[] = ["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "soldier", "brigand", "captain", "sorcerer", "horror", "Asherah", "pikeman", "wardog", "troll", "morvenian-wolf", "butcher", "birolho", "familiar", "swamp-blue-calf", "ancient-golem", "lancer", "sandoval", "kaelFinal", "conjurer"];
+const SPRITES: SpriteId[] = ["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "soldier", "brigand", "captain", "sorcerer", "horror", "Asherah", "pikeman", "wardog", "troll", "morvenian-wolf", "butcher", "birolho", "familiar", "swamp-blue-calf", "ancient-golem", "lancer", "sandoval", "kaelFinal", "kaelEarly", "conjurer"];
 
 const LOAD_POOL = 8;
 let loadActive = 0;
@@ -81,7 +81,7 @@ function releaseLoad(): void {
 
 function spriteFrameSrc(id: SpriteId, frame: string, cacheBust = ""): string {
   // Conjurer's active art is kept as a complete, source-preserved serial. Talk drives idle; the former Idle sheet drives casting.
-  const directory = id === "conjurer" ? "conjurer/conjurer-complete-003" : id === "sandoval" ? "sandoval/sandoval-complete-001" : id === "kaelFinal" ? "Kael_Final/kael-final-002" : id;
+  const directory = id === "conjurer" ? "conjurer/conjurer-complete-003" : id === "sandoval" ? "sandoval/sandoval-complete-001" : id === "kael" || id === "kaelFinal" ? "Kael_Final/kael-final-002" : id === "kaelEarly" ? "kael" : id;
   return `/game/sprites/${directory}/${frame}.png${cacheBust}`;
 }
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -116,7 +116,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 // big horrors, and the two creatures cut from reference video (familiar, ancient golem).
 // loadGameArt rejects on any missing file, so this set and what is on disk have to move
 // together.
-const HERO_IDLE = new Set<SpriteId>(["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "horror", "Asherah", "familiar", "ancient-golem", "lancer", "sandoval", "kaelFinal", "conjurer"]);
+const HERO_IDLE = new Set<SpriteId>(["kael", "nira", "voss", "salazar", "malrec", "aldric", "defaultLancer", "horror", "Asherah", "familiar", "ancient-golem", "lancer", "sandoval", "kaelFinal", "kaelEarly", "conjurer"]);
 
 export async function loadGameArt(): Promise<GameArt> {
   const tiles = {} as Record<TerrainId, HTMLImageElement[]>;
@@ -136,8 +136,8 @@ export async function loadGameArt(): Promise<GameArt> {
   const attacks: Partial<Record<SpriteId, HTMLImageElement[]>> = {};
   await Promise.all(
     SPRITES.map(async (id) => {
-      const n = id === "conjurer" || id === "kaelFinal" ? 36 : id === "sandoval" ? 8 : HERO_IDLE.has(id) ? 12 : 4;
-      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" || id === "defaultLancer" ? "?v=sheet2" : id === "lancer" ? "?v=3" : id === "sandoval" ? "?v=sandoval-complete-001" : id === "kaelFinal" ? "?v=kael-final-002" : id === "conjurer" ? "?v=conjurer-complete-003" : "";
+      const n = id === "conjurer" || id === "kael" || id === "kaelFinal" ? 36 : id === "sandoval" ? 8 : HERO_IDLE.has(id) ? 12 : 4;
+      const cacheBust = id === "troll" ? "?v=11" : id === "Asherah" ? "?v=3" : id === "familiar" ? "?v=6" : id === "malrec" || id === "aldric" || id === "defaultLancer" ? "?v=sheet2" : id === "lancer" ? "?v=3" : id === "sandoval" ? "?v=sandoval-complete-001" : id === "kael" || id === "kaelFinal" ? "?v=kael-final-002" : id === "kaelEarly" ? "?v=kael-early" : id === "conjurer" ? "?v=conjurer-complete-003" : "";
       sprites[id] = await Promise.all(
         Array.from({ length: n }, (_, i) =>
           loadImage(spriteFrameSrc(id, id === "conjurer" ? `talk-${i + 1}` : `${i + 1}`, cacheBust)),
@@ -149,7 +149,9 @@ export async function loadGameArt(): Promise<GameArt> {
   // set was last republished under. attackPose spreads whatever count it finds across the
   // lunge/hit/recover stages, so a set only has to be listed here to animate.
   const ATTACK_FRAMES: Partial<Record<SpriteId, { n: number; bust: string }>> = {
-    kael: { n: 12, bust: "?v=2" },
+    // Kael is now the Final set; Kael Early preserves the former main-character cut.
+    kael: { n: 36, bust: "?v=kael-final-002" },
+    kaelEarly: { n: 12, bust: "?v=kael-early" },
     nira: { n: 4, bust: "" },
     voss: { n: 4, bust: "" },
     salazar: { n: 4, bust: "" },
@@ -197,6 +199,8 @@ export async function loadGameArt(): Promise<GameArt> {
     defaultLancer: { n: 6, bust: "?v=sheet2" },
     lancer: { n: 6, bust: "?v=3" },
     sandoval: { n: 6, bust: "?v=sandoval-complete-001" },
+    // Kael Final is the default set; its sole right-facing walk mirrors left automatically.
+    kael: { n: 36, bust: "?v=kael-final-002" },
     // One authored right-facing walk. The renderer mirrors it for left-facing movement.
     kaelFinal: { n: 36, bust: "?v=kael-final-002" },
     conjurer: { n: 36, bust: "?v=conjurer-complete-003" },
@@ -231,15 +235,16 @@ export async function loadGameArt(): Promise<GameArt> {
   ]);
   const backdrops: Record<string, HTMLImageElement> = {
     profundezas: await loadImage("/game/assets/profundezas-bg.jpg?v=2"),
+    thebridge: await loadImage("/game/assets/thebridge-bg.jpg?v=1"),
   };
   const idles: Partial<Record<SpriteId, HTMLImageElement[]>> = {
-    kael: await Promise.all(Array.from({ length: 36 }, (_, i) => loadImage(`/game/sprites/kael/stand-${i + 1}.png?v=2`))),
+    kaelEarly: await Promise.all(Array.from({ length: 36 }, (_, i) => loadImage(`/game/sprites/kael/stand-${i + 1}.png?v=kael-early`))),
   };
   const walkDirs: GameArt["walkDirs"] = {
-    kael: {
-      front: await loadImage("/game/sprites/kael/walk-front.png"),
-      back: await loadImage("/game/sprites/kael/walk-back.png"),
-      side: await loadImage("/game/sprites/kael/walk-side.png"),
+    kaelEarly: {
+      front: await loadImage("/game/sprites/kael/walk-front.png?v=kael-early"),
+      back: await loadImage("/game/sprites/kael/walk-back.png?v=kael-early"),
+      side: await loadImage("/game/sprites/kael/walk-side.png?v=kael-early"),
     },
     // No side-on art for either — the idle/front frame stands in, same as it already does for
     // any sprite with no walkDirs entry at all, so a purely sideways step doesn't visibly swap.

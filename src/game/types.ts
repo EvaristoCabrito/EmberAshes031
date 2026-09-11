@@ -61,6 +61,7 @@ export type ClassId =
   | "lancer"
   | "sandoval"
   | "kaelFinal"
+  | "kaelEarly"
   | "conjurer"
   | "paladin"
   | "heavyKnight"
@@ -79,7 +80,7 @@ export type ClassId =
   // computed live from its summoner (see castSummonFamiliar), CLASSES.familiar only
   // supplies a sprite/size/range fallback and satisfies the ClassId-keyed tables below.
   | "familiar";
-export type SpriteId = "kael" | "nira" | "voss" | "salazar" | "malrec" | "aldric" | "defaultLancer" | "soldier" | "brigand" | "captain" | "sorcerer" | "horror" | "Asherah" | "pikeman" | "wardog" | "troll" | "morvenian-wolf" | "butcher" | "birolho" | "familiar" | "swamp-blue-calf" | "ancient-golem" | "lancer" | "sandoval" | "kaelFinal" | "conjurer";
+export type SpriteId = "kael" | "nira" | "voss" | "salazar" | "malrec" | "aldric" | "defaultLancer" | "soldier" | "brigand" | "captain" | "sorcerer" | "horror" | "Asherah" | "pikeman" | "wardog" | "troll" | "morvenian-wolf" | "butcher" | "birolho" | "familiar" | "swamp-blue-calf" | "ancient-golem" | "lancer" | "sandoval" | "kaelFinal" | "kaelEarly" | "conjurer";
 export type HealId = "cureMinor" | "cureWounds" | "cureLight";
 export type SpellKind =
   | "fireball"
@@ -197,6 +198,16 @@ export interface DecorationDef {
    * on "highruin". Naming it here lets the editor lay the tile with the prop, so the
    * picture and the rules cannot drift apart. */
   tile?: TerrainId;
+  /** Draw this prop after character sprites so near-side scenery can naturally occlude
+   * them. This is visual-only: it does not change movement, line of sight, or terrain. */
+  foreground?: boolean;
+  /** Explicit sprite-depth layer. “behind” stays above the ground and selection overlay,
+   * but below characters; “front” occludes everything behind the prop. */
+  unitLayer?: "behind" | "front";
+  /** Compatible repeating modules may share exactly one joining hex in the editor. */
+  repeatGroup?: string;
+  /** Optional vertical presentation multiplier for tall isometric scenery. */
+  heightScale?: number;
 }
 
 /** A decoration placed on a mission's map, anchored at (x,y). */

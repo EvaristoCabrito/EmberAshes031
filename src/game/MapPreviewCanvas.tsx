@@ -17,11 +17,12 @@ const PREVIEW_SCROLL_PAN_RATE = 0.45;
  * render(), never tick(): no animation loop, no AI, no turns — just a live snapshot that
  * redraws whenever the mission prop changes (the caller debounces that) or the panel resizes.
  * A left click can use the current editor brush directly; gameplay state remains untouched. */
-export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecorationId, selectedUnit, onUnitSelect, onUnitPlace }: {
+export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecorationId, selectedPlacedDecoration, selectedUnit, onUnitSelect, onUnitPlace }: {
   mission: Mission;
   art: GameArt;
   onCellClick?: (x: number, y: number) => void;
   selectedDecorationId?: string;
+  selectedPlacedDecoration?: { id: string; x: number; y: number; rot?: number } | null;
   selectedUnit?: PreviewUnitSelection | null;
   onUnitSelect?: (unit: PreviewUnitSelection) => void;
   onUnitPlace?: (unit: PreviewUnitSelection, x: number, y: number) => void;
@@ -94,7 +95,8 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
         }
         needsCameraRestore = false;
       }
-      if (selectedDecorationId) engine.drawDecorationHighlight(ctx, selectedDecorationId);
+      if (selectedPlacedDecoration) engine.drawDecorationHighlight(ctx, selectedPlacedDecoration.id, selectedPlacedDecoration);
+      else if (selectedDecorationId) engine.drawDecorationHighlight(ctx, selectedDecorationId);
     };
 
     redrawRef.current = draw;
@@ -118,7 +120,7 @@ export function MapPreviewCanvas({ mission, art, onCellClick, selectedDecoration
       if (engineRef.current === engine) engineRef.current = null;
       if (redrawRef.current === draw) redrawRef.current = null;
     };
-  }, [mission, art, onCellClick, selectedDecorationId, zoom]);
+  }, [mission, art, onCellClick, selectedDecorationId, selectedPlacedDecoration, zoom]);
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     const viewport = viewportRef.current;
