@@ -31,6 +31,21 @@ export const MAX_GRID = 160;
  */
 export const SIGHT_RADIUS = 7;
 
+/**
+ * How far a sprite lifts off its hex while standing on high ground, as a fraction of
+ * the hex width.
+ *
+ * A fraction and not a pixel count because the board draws at four zoom levels (see
+ * ZOOM_RADII in ./engine): twenty pixels reads as a real step up at the closest zoom
+ * and as nothing at the widest, whereas a fraction of the hex holds its proportion at
+ * all four.
+ *
+ * Purely presentational. The unit's grid coordinates do not move, the order sprites
+ * draw in still sorts on the logical row, and the shadow stays on the hex — the gap
+ * that opens between the feet and the shadow is the whole of the effect.
+ */
+export const HIGH_GROUND_LIFT = 0.18;
+
 export const TERRAIN: Record<TerrainId, TerrainDef> = {
   plains: { id: "plains", name: "Planície", moveCost: 1, def: 0, atk: 0, passable: true },
   woods: { id: "woods", name: "Bosque", moveCost: 2, def: 1, atk: 0, passable: true },

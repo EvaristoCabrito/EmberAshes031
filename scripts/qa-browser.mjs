@@ -331,6 +331,147 @@ const r = await page.evaluate(async () => {
     };
   }
 
+  // ------------------------------------------------------------------- lift
+  // The high-ground lift is presentational, so the only honest test is pixels.
+  //
+  // Two renders of the same board differing in one decoration's yieldsHighGround
+  // switch. Because nothing stamps terrain any more, the tile art and the prop art
+  // are byte-identical between the two, which leaves the sprite's lift as the only
+  // thing that can differ — that is what makes the diff conclusive.
+  {
+    const W = 800;
+    const H = 620;
+    const cols = 14;
+    const rows = 10;
+    const ux = 6;
+    const uy = 5;
+    const shot = document.createElement("canvas");
+    shot.width = W;
+    shot.height = H;
+    const sctx = shot.getContext("2d");
+
+    const render = (flags) => {
+      const m = mission({
+        cols, rows, layout: layout(cols, rows, "plains"),
+        playerSpawns: [{ name: "Kael", classId: "swordsman", x: ux, y: uy }],
+        enemySpawns: [{ name: "Foe", classId: "soldier", x: 12, y: 9 }],
+        decorations: [{ id: "wooden-cart", x: ux, y: uy, ...flags }],
+      });
+      const eng = new BattleEngine(m, art, roster, 7);
+      eng.setZoom(2);
+      // No tick: bob/sway/breath and every pulse key off time that only tick advances,
+      // so skipping it makes both renders deterministic without touching the engine.
+      eng.render(sctx, W, H, 1);
+      const g = eng.layout;
+      return {
+        data: sctx.getImageData(0, 0, W, H).data,
+        tile: g.tile,
+        hexCx: g.ox + g.tile * Math.sqrt(3) * (ux + 0.5 * (uy & 1) + 0.5),
+        hexCy: g.oy + g.tile * 2.4 + g.tile * (1.5 * uy + 1),
+      };
+    };
+
+    const flat = render({});
+    const again = render({});
+    const high = render({ yieldsHighGround: true });
+
+    // Canvas rasterisation is not bit-exact: two identical renders differ by a couple
+    // of hundred scattered, low-amplitude pixels (antialiasing on text and gradients).
+    // So the threshold is well above that amplitude, and the assertions below compare
+    // against a noise floor this script measures rather than assuming zero.
+    const DIFF_THRESHOLD = 40;
+
+    /** Pixels that differ, how many, and how many of them sit on the sprite's column. */
+    const diffBox = (a, b) => {
+      let count = 0;
+      let onSprite = 0;
+      let top = Infinity;
+      let bottom = -Infinity;
+      let left = Infinity;
+      let right = -Infinity;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4;
+          const d = Math.max(
+            Math.abs(a.data[i] - b.data[i]),
+            Math.abs(a.data[i + 1] - b.data[i + 1]),
+            Math.abs(a.data[i + 2] - b.data[i + 2]),
+          );
+          if (d <= DIFF_THRESHOLD) continue;
+          count++;
+          if (y < top) top = y;
+          if (y > bottom) bottom = y;
+          if (x < left) left = x;
+          if (x > right) right = x;
+          if (Math.abs(x - a.hexCx) <= a.tile * Math.sqrt(3) * 0.75) onSprite++;
+        }
+      }
+      return count ? { count, onSprite, top, bottom, left, right } : { count: 0, onSprite: 0 };
+    };
+
+    /**
+     * How far the sprite moved, measured rather than assumed: build a per-row ink
+     * profile down a strip through the sprite and find the vertical shift that best
+     * lines the two renders up.
+     */
+    const inkProfile = (img, x0, x1) => {
+      const rowsOut = new Float64Array(H);
+      for (let y = 0; y < H; y++) {
+        let sum = 0;
+        for (let x = x0; x < x1; x++) {
+          const i = (y * W + x) * 4;
+          sum += img.data[i] + img.data[i + 1] + img.data[i + 2];
+        }
+        rowsOut[y] = sum;
+      }
+      return rowsOut;
+    };
+    const bestShift = (a, b, from, to, maxShift) => {
+      let best = 0;
+      let bestErr = Infinity;
+      for (let d = 0; d <= maxShift; d++) {
+        let err = 0;
+        for (let y = from; y < to; y++) err += Math.abs(b[y] - a[y + d]);
+        if (err < bestErr) {
+          bestErr = err;
+          best = d;
+        }
+      }
+      return best;
+    };
+
+    const cellW = flat.tile * Math.sqrt(3);
+    const box = diffBox(flat, high);
+    const strip = [Math.round(flat.hexCx - cellW * 0.2), Math.round(flat.hexCx + cellW * 0.2)];
+    const shift = bestShift(
+      inkProfile(flat, strip[0], strip[1]),
+      inkProfile(high, strip[0], strip[1]),
+      Math.round(flat.hexCy - cellW * 1.4),
+      Math.round(flat.hexCy),
+      Math.round(cellW * 0.5),
+    );
+
+    // A sprite is about `cell * 1.42 * 1.2` tall and a bit over `cell * 1.11 * 1.2`
+    // wide; anything outside that around the hex means something other than this one
+    // sprite moved — a shifted camera, or a tactical overlay redrawn.
+    const noise = diffBox(flat, again);
+    out.lift = {
+      expectedLiftPx: Math.round(cellW * 0.18),
+      measuredLiftPx: shift,
+      changedPixels: box.count,
+      changedOnSpriteColumn: box.onSprite,
+      // The mass, not the bounding box: one stray antialiased pixel anywhere would
+      // ruin a box test, while a share tells you where the change actually is.
+      shareOnSpriteColumn: box.count ? +(box.onSprite / box.count).toFixed(3) : 0,
+      // Noise floor for the method itself, measured: the same flags rendered twice.
+      // `blocksPath` is deliberately not the control here — it pushes the spawn off
+      // the now-solid cell (6,5 -> 7,4) and focusPlayers then centres the camera
+      // elsewhere, so every pixel moves for a reason that is not the lift.
+      noisePixels: noise.count,
+      signalOverNoise: noise.count ? +(box.count / noise.count).toFixed(1) : null,
+    };
+  }
+
   return out;
 });
 
@@ -374,6 +515,17 @@ expect("an unobstructed line still passes", r.sight.clearLine);
 
 const fb = r.fogBehindProp;
 expect("the overlay reaches the fog pass", fb.tilesStillPlains && fb.seesBeforeProp && fb.seesProp && !fb.seesPastProp, `before ${fb.seesBeforeProp}, prop ${fb.seesProp}, past ${fb.seesPastProp}`);
+
+const lift = r.lift;
+console.log("[qa] high-ground lift");
+expect(
+  "the lift stands well clear of the rasteriser's noise",
+  lift.changedPixels > 0 && (lift.signalOverNoise === null || lift.signalOverNoise >= 10),
+  `${lift.changedPixels} px changed against a ${lift.noisePixels} px noise floor` +
+    (lift.signalOverNoise === null ? " (nothing survived the threshold twice over)" : ` (${lift.signalOverNoise}x)`),
+);
+expect("high ground lifts the sprite by the configured amount", Math.abs(lift.measuredLiftPx - lift.expectedLiftPx) <= 2, `measured ${lift.measuredLiftPx}px, expected ${lift.expectedLiftPx}px`);
+expect("the change is concentrated on that one sprite", lift.shareOnSpriteColumn >= 0.95, `${(lift.shareOnSpriteColumn * 100).toFixed(1)}% of changed pixels sit on the sprite's column`);
 
 if (pageErrors.length) {
   console.log("[qa] page errors:");

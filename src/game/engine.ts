@@ -1,4 +1,4 @@
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, isBossClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, SIGHT_RADIUS, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, HIGH_GROUND_LIFT, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, isBossClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, SIGHT_RADIUS, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
 import type { SpellTier } from "./data";
 import { canCounter, makeForecast, mulberry32, powerOf, protOf, rollDamage, rollDamageCustom } from "./combat";
 import {
@@ -81,6 +81,10 @@ interface Particle {
 
 const PARTICLE_CAP = 32;
 const ZOOM_RADII = [22, 34, 50, 72];
+
+/** Seconds one step of a walk animation takes. Shared by the position and the
+ * high-ground lift so a unit's feet and its elevation move on the same clock. */
+const MOVE_STEP_DUR = 0.12;
 
 /** Level-up flourish: a small pixel-space burst anchored to a unit's hex (recomputed every
  * frame from its live position, so it still tracks correctly if the unit somehow moves mid-
@@ -5833,14 +5837,42 @@ export class BattleEngine {
     return { cx: cx / n, cy: cy / n };
   }
 
+  /**
+   * How far this unit's sprite rides above its hex, in pixels, for high ground.
+   *
+   * Mirrors unitPixel's interpolation instead of reading the current cell outright:
+   * during a step `u.x`/`u.y` still hold the cell being left, so a unit walking onto a
+   * hill would snap upward as the step ended. Easing it over the same step makes the
+   * climb read as a climb.
+   *
+   * Reads the consolidated properties, so a prop whose `yieldsHighGround` switch is on
+   * lifts a sprite exactly as a painted hill does — one answer for the bonus and for
+   * the picture. Uses the anchor cell, which is the cell the combat bonus reads too.
+   */
+  private unitLift(u: Unit, cell: number): number {
+    const full = cell * HIGH_GROUND_LIFT;
+    const liftAt = (x: number, y: number) => (this.hexAt(x, y).height ? full : 0);
+    if (this.active && this.active.type === "move" && this.active.id === u.id) {
+      const a = this.active;
+      const from = a.path[a.i];
+      const to = a.path[a.i + 1];
+      if (from && to) {
+        const k = easeOut(Math.min(1, a.t / MOVE_STEP_DUR));
+        const A = liftAt(from.x, from.y);
+        const B = liftAt(to.x, to.y);
+        return A + (B - A) * k;
+      }
+    }
+    return liftAt(u.x, u.y);
+  }
+
   private unitPixel(u: Unit): { cx: number; cy: number } {
     if (this.active && this.active.type === "move" && this.active.id === u.id) {
       const a = this.active;
       const from = a.path[a.i];
       const to = a.path[a.i + 1];
       if (from && to) {
-        const dur = 0.12;
-        const k = easeOut(Math.min(1, a.t / dur));
+        const k = easeOut(Math.min(1, a.t / MOVE_STEP_DUR));
         const A = this.footprintCentroid(from.x, from.y, u.size, u.footprintW, u.footprintOffsets);
         const B = this.footprintCentroid(to.x, to.y, u.size, u.footprintW, u.footprintOffsets);
         return { cx: A.cx + (B.cx - A.cx) * k, cy: A.cy + (B.cy - A.cy) * k };
@@ -6377,6 +6409,9 @@ export class BattleEngine {
       const { cx: px, cy: py } = this.unitPixel(u);
       const foot = s >= 4 ? 2.15 : s === 2 ? 1.5 : boss ? 1.12 : 1;
       const { bob, sway, breath } = this.liveMotion(u, cell);
+      // Purely visual: the sprite and the things that hang off it rise, the shadow below
+      // does not, and the sort above already ran on the logical row. See unitLift.
+      const lift = this.unitLift(u, cell);
       ctx.save();
       ctx.globalAlpha = u.fade * (u.moved && u.side === "player" && this.phase === "player" ? 0.55 : 1);
       ctx.fillStyle = "rgba(0,0,0,0.4)";
@@ -6430,7 +6465,7 @@ export class BattleEngine {
       // matching the hex outline radius used elsewhere) instead of the smaller offset tuned
       // for normal-size sprites, so the feet don't float above the tile they stand on.
       const footY = s >= 4 ? tile * 0.9 : cell * 0.42;
-      ctx.translate(px + sway, py + footY + bob);
+      ctx.translate(px + sway, py + footY + bob - lift);
       // Dedicated left/right walk+attack cuts already face the enemy, so flipping
       // them would put the spear/staff on the wrong side. Idle still flips.
       const dirAction = (u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval") && (atk != null || moving);
@@ -6496,7 +6531,7 @@ export class BattleEngine {
         const bw = cell * (s >= 4 ? 1.35 : s === 2 ? 0.9 : boss ? 0.68 : 0.62);
         const bh = Math.max(4, cell * 0.07);
         const bx = px - bw / 2;
-        const by = py - h + cell * 0.42 + bob - Math.max(8, cell * 0.12);
+        const by = py - h + cell * 0.42 + bob - lift - Math.max(8, cell * 0.12);
         ctx.fillStyle = "rgba(12,11,10,0.82)";
         ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
         ctx.fillStyle = "#2c2824";
