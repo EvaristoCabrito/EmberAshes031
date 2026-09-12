@@ -692,6 +692,40 @@ export class BattleEngine {
    * happened since — see undoMove. Cleared with the turn. */
   private turnStart: Point | null = null;
   private moveSpoiled = false;
+  /**
+   * Cached `occupancy` map plus the layout it describes, packed one int per unit.
+   *
+   * `occupancy` walks every living unit and expands its footprint into a fresh Map
+   * keyed by string, and it was rebuilt at each of twenty-odd call sites — eight of
+   * them inside one `spellAimValid`, which `render` runs every frame while a spell
+   * is aimed. At a hundred-odd multi-hex units that dominates the frame.
+   *
+   * The guard compares the packed layout rather than counting a version: positions
+   * and aliveness are mutated in place all over this file, so a counter would need
+   * a bump at every one of those sites and one missed bump hands out a stale map —
+   * a unit that reads as passable when it is not. Comparing is O(units) of integer
+   * work against O(units x footprint) of Map building, so it still pays, and it
+   * cannot go stale. Footprint shape is fixed at spawn, so it needs no stamp; a
+   * summon changes the array length, which the compare catches.
+   */
+  private occCache: Map<string, Unit> | null = null;
+  private occStamp: number[] = [];
+  /**
+   * Whole-board distance fields, one per player, shared by every enemy that runs its
+   * AI against the same board (see playerDistanceFields).
+   *
+   * `terrainDistanceField` is a Dijkstra over every cell, and runAiFor built one per
+   * player for each enemy in turn. Players cannot move during the enemy phase, so
+   * all of those were the same field computed again and again: at 160x160 with a
+   * hundred enemies and six players that is six hundred whole-board searches per
+   * round, about 45 seconds of them. Six suffice.
+   *
+   * `terrainVersion` is bumped by the two things that reshape the board mid-battle —
+   * a smashed barricade and an opened chest — since either changes path costs.
+   */
+  private fieldCache = new Map<string, Map<string, number>>();
+  private fieldStamp = "";
+  private terrainVersion = 0;
   /** All alive units for this round, sorted by CLASSES[classId].init (lower first, ties favor the player). */
   private turnOrder: string[] = [];
   /** id of the unit whose turn we've already dispatched — lets the tick loop react only on change. */
@@ -1160,9 +1194,11 @@ export class BattleEngine {
     if (snap.missionId !== this.mission.id) return;
     if (snap.tiles.length === this.tiles.length) {
       for (let i = 0; i < snap.tiles.length; i++) this.tiles[i] = snap.tiles[i]!;
+      this.terrainVersion++;
     }
     this.decorations.splice(0, this.decorations.length, ...snap.decorations.map((d) => ({ ...d })));
     this.units = snap.units.map(unitFromSnap);
+    this.invalidateOcc();
     this.turn = snap.turn;
     this.phase = snap.phase;
     this.turnOrder = [...snap.turnOrder];
@@ -2096,6 +2132,9 @@ export class BattleEngine {
         const i = c.y * this.cols + c.x;
         if (this.tiles[i] !== "barricade") continue;
         this.tiles[i] = fill;
+        // Path costs just changed, so the cached distance fields no longer describe
+        // this board (see playerDistanceFields).
+        this.terrainVersion++;
         // The prop goes with the terrain — leaving it would draw a barricade over ground
         // that is now walkable.
         for (let d = this.decorations.length - 1; d >= 0; d--) {
@@ -2127,7 +2166,7 @@ export class BattleEngine {
   private nudgeOffHazard(unit: Unit): void {
     const here = TERRAIN[tileAt(this.tiles, this.cols, unit.x, unit.y)];
     if (here.passable) return;
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const seen = new Set<string>([key(unit.x, unit.y)]);
     const q: Point[] = [{ x: unit.x, y: unit.y }];
     while (q.length) {
@@ -3257,6 +3296,63 @@ export class BattleEngine {
     return cap === u.mov ? u : { ...u, mov: cap };
   }
 
+  /** Who stands where, rebuilt only when the layout actually moved. See `occCache`. */
+  private occ(): Map<string, Unit> {
+    const n = this.units.length;
+    let same = this.occCache !== null && this.occStamp.length === n;
+    for (let i = 0; i < n; i++) {
+      const u = this.units[i]!;
+      // x and y are bounded by MAX_GRID, so this packs without overlap.
+      const packed = (u.x * 1024 + u.y) * 2 + (u.alive ? 1 : 0);
+      if (this.occStamp[i] !== packed) {
+        same = false;
+        this.occStamp[i] = packed;
+      }
+    }
+    if (same) return this.occCache!;
+    this.occStamp.length = n;
+    const units = this.units;
+    this.occCache = occupancy(units);
+    return this.occCache;
+  }
+
+  /**
+   * Drop the cache when `this.units` is replaced wholesale rather than mutated.
+   * The packed compare only sees positions, so a restore that happens to land every
+   * unit on the cell it already held would otherwise keep a map pointing at the
+   * previous Unit objects — same coordinates, wrong identities.
+   */
+  private invalidateOcc(): void {
+    this.occCache = null;
+    this.occStamp.length = 0;
+  }
+
+  /**
+   * One whole-board distance field per player, cached while the board and the party
+   * stand still. See `fieldCache` for why this matters.
+   *
+   * Keyed on terrain version plus every player's position, so the first enemy of a
+   * phase pays for the fields and the rest read them. A player moving (their own
+   * phase, or a Trip/Stampede shove during the enemy's) or terrain changing retires
+   * the whole set rather than trying to patch it.
+   */
+  private playerDistanceFields(players: Unit[]): { p: Unit; field: Map<string, number> }[] {
+    let stamp = `${this.terrainVersion}`;
+    for (const p of players) stamp += `|${p.id}:${p.x},${p.y}`;
+    if (stamp !== this.fieldStamp) {
+      this.fieldCache.clear();
+      this.fieldStamp = stamp;
+    }
+    return players.map((p) => {
+      let field = this.fieldCache.get(p.id);
+      if (!field) {
+        field = terrainDistanceField(p, this.tiles, this.cols, this.rows);
+        this.fieldCache.set(p.id, field);
+      }
+      return { p, field };
+    });
+  }
+
   private spellAimValid(caster: Unit, cell: Point): boolean {
     if (!this.spellKind) return false;
     if (this.spellKind === "fireball") {
@@ -3269,24 +3365,24 @@ export class BattleEngine {
     }
     if (this.spellKind === "longShot") {
       const d = manhattan(caster, cell);
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
+      const here = this.occ().get(key(cell.x, cell.y));
       if (!here || !attackableByPlayer(here) || d < caster.minRange || d > this.longMax(caster)) return false;
       return clearShot(caster, cell, this.tiles, this.cols, "arrow");
     }
     if (this.spellKind === "piercing") return this.piercingRay(caster, cell) !== null;
     if (this.spellKind === "piercingThrust") return this.piercingThrustRay(caster, cell) !== null;
     if (this.spellKind === "lightning") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
+      const here = this.occ().get(key(cell.x, cell.y));
       if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > LIGHTNING.range) return false;
       return true;
     }
     if (this.spellKind === "lightningTier3") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
+      const here = this.occ().get(key(cell.x, cell.y));
       if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > LIGHTNING_T3.range) return false;
       return true;
     }
     if (this.spellKind === "shock") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
+      const here = this.occ().get(key(cell.x, cell.y));
       if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > SHOCK.range) return false;
       return true;
     }
@@ -3294,7 +3390,7 @@ export class BattleEngine {
       return manhattan(caster, cell) <= SWEEP.radius;
     }
     if (this.spellKind === "magicMissile") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
+      const here = this.occ().get(key(cell.x, cell.y));
       if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > MAGIC_MISSILE.range) return false;
       return clearShot(caster, cell, this.tiles, this.cols, "bolt");
     }
@@ -3302,14 +3398,14 @@ export class BattleEngine {
       if (manhattan(caster, cell) > SUMMON_FAMILIAR.range) return false;
       if (!inBounds(cell.x, cell.y, this.cols, this.rows)) return false;
       if (!TERRAIN[tileAt(this.tiles, this.cols, cell.x, cell.y)].passable) return false;
-      return !occupancy(this.units).get(key(cell.x, cell.y));
+      return !this.occ().get(key(cell.x, cell.y));
     }
     if (this.spellKind === "webOfDreams") {
       if (manhattan(caster, cell) > WEB_OF_DREAMS.range) return false;
       return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt");
     }
     if (this.spellKind === "doubleStrike" || this.spellKind === "trip") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
+      const here = this.occ().get(key(cell.x, cell.y));
       return !!here && here.alive && here.side !== caster.side && canHitFrom(caster, caster, here, this.tiles, this.cols);
     }
     if (this.spellKind === "cleave" || this.spellKind === "shoulderSmash") {
@@ -3317,7 +3413,7 @@ export class BattleEngine {
     }
     if (this.spellKind === "multiShot") {
       const d = manhattan(caster, cell);
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
+      const here = this.occ().get(key(cell.x, cell.y));
       if (!here || !attackableByPlayer(here) || d < caster.minRange || d > caster.maxRange + MULTI_SHOT.rangeBonus) return false;
       return clearShot(caster, cell, this.tiles, this.cols, "arrow");
     }
@@ -3402,14 +3498,14 @@ export class BattleEngine {
     if (!this.isHeal(this.spellKind)) return false;
     const range = CURES[this.spellKind].range;
     if (manhattan(caster, cell) > range) return false;
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const who = occ.get(key(cell.x, cell.y));
     return !!who && who.side === "player" && who.alive && who.hp < who.maxHp;
   }
 
   private validCureDiseaseTarget(caster: Unit, cell: Point): boolean {
     if (manhattan(caster, cell) > CURE_DISEASE.range) return false;
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const who = occ.get(key(cell.x, cell.y));
     return !!who && who.side === "player" && who.alive && (who.diseased || who.poisoned);
   }
@@ -3430,7 +3526,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const target = occ.get(key(cell.x, cell.y));
     if (!target) return;
     this.spendTier(unit, kind);
@@ -3447,7 +3543,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const target = occ.get(key(cell.x, cell.y));
     if (!target) return;
     this.spendTier(unit, "cureDisease");
@@ -3488,7 +3584,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "longShot");
@@ -3557,7 +3653,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "lightning");
@@ -3586,7 +3682,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "lightningTier3");
@@ -3617,7 +3713,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
 
@@ -3664,7 +3760,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
 
@@ -3705,7 +3801,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "doubleStrike");
@@ -3727,7 +3823,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "trip");
@@ -4317,6 +4413,7 @@ export class BattleEngine {
       this.tiles[i] === "chest" ||
       this.decorations.some((dec) => dec.id === "locked-chest" && dec.x === target.x && dec.y === target.y);
     this.tiles[i] = this.visualFloorAt(target.x, target.y);
+    this.terrainVersion++;
     // decorations is readonly (the renderer holds the same array), so drop the chest's
     // decoration in place rather than rebinding the field.
     for (let d = this.decorations.length - 1; d >= 0; d--) {
@@ -4840,7 +4937,7 @@ export class BattleEngine {
     // obstacle, because every actual step first reads as moving away (see
     // terrainDistanceField). Computed once per player and reused for both picking who to
     // chase and which reachable cell actually closes the gap.
-    const fields = players.map((p) => ({ p, field: terrainDistanceField(p, this.tiles, this.cols, this.rows) }));
+    const fields = this.playerDistanceFields(players);
     let nearest = fields[0]!;
     for (const f of fields) {
       const dCur = f.field.get(key(next.x, next.y)) ?? Infinity;
@@ -4904,7 +5001,7 @@ export class BattleEngine {
   }
 
   private handleCell(cell: Point, via: "click" | "tap" = "click"): void {
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const here = occ.get(key(cell.x, cell.y));
     const selected = this.units.find((u) => u.id === this.selectedId);
 
