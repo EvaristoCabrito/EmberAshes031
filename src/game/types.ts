@@ -250,6 +250,9 @@ export interface Mission {
    * Missing/undefined index or omitted array entirely means variant 0 (the default) —
    * existing missions never set this and keep rendering exactly as before. */
   tileVariants?: number[];
+  /** Default ground chosen in the map editor. Terrain-changing decorations restore this tile when removed. */
+  baseTile?: TerrainId;
+  baseVariant?: number;
   /** How far each tile's art is turned, in sixths of a circle (0-5), row-major like
    * tileVariants. A hex maps onto itself every 60 degrees, so its art can be spun without
    * the shape or its neighbours moving — which is what makes a coastline, a road or a wall

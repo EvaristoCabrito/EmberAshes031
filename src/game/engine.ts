@@ -5251,13 +5251,27 @@ export class BattleEngine {
     };
   }
 
+  /** A small deliberate margin beyond the tactical board. It lets the player pan across
+   * the dark perimeter and see a mission's painted backdrop, without giving the camera
+   * enough empty room to lose the battlefield. */
+  private cameraMargin(tile: number): { x: number; y: number } {
+    return { x: 0, y: tile * 3 };
+  }
+
   private clampCam(): void {
     const tile = ZOOM_RADII[this.zoom]!;
     const { w, h } = this.boardSize(tile);
-    const maxX = Math.max(0, w - this.viewW);
-    const maxY = Math.max(0, h - this.viewH);
-    this.camX = Math.min(maxX, Math.max(0, this.camX));
-    this.camY = Math.min(maxY, Math.max(0, this.camY));
+    const margin = this.cameraMargin(tile);
+    // For a board smaller than its window, the natural resting camera is its centered
+    // position. Larger boards retain their existing origin, merely gaining this small rim.
+    const naturalMaxX = w - this.viewW;
+    const naturalMaxY = h - this.viewH;
+    const minX = naturalMaxX < 0 ? naturalMaxX / 2 - margin.x : -margin.x;
+    const minY = naturalMaxY < 0 ? naturalMaxY / 2 - margin.y : -margin.y;
+    const maxX = naturalMaxX < 0 ? naturalMaxX / 2 + margin.x : naturalMaxX + margin.x;
+    const maxY = naturalMaxY < 0 ? naturalMaxY / 2 + margin.y : naturalMaxY + margin.y;
+    this.camX = Math.min(maxX, Math.max(minX, this.camX));
+    this.camY = Math.min(maxY, Math.max(minY, this.camY));
   }
 
   ensureVisible(col: number, row: number): void {
@@ -5343,7 +5357,8 @@ export class BattleEngine {
     layer: "ground" | "behind" | "front" = "ground",
   ): void {
     const SQRT3 = Math.sqrt(3);
-    for (const p of this.decorations) {
+    for (let decorationIndex = 0; decorationIndex < this.decorations.length; decorationIndex++) {
+      const p = this.decorations[decorationIndex]!;
       const def = DECORATIONS[p.id];
       let img = this.art.decorations[p.id];
       if ((!img || !img.naturalWidth) && def) {
@@ -5418,7 +5433,44 @@ export class BattleEngine {
       // back to turning the bitmap, which tilts rather than faces and is a placeholder.
       const facing = decorationFacing(p.id, p.rot ?? 0, (file) => this.decorArtReady(file));
       const art = facing.own ? (this.art.decorations[facing.file] ?? img) : img;
-      if (facing.step === 0) {
+
+      // At a Tall-Parapeito junction the newest visible module owns the shared picture
+      // area. The older drawing is clipped even through transparent pixels, leaving a
+      // single clean tower rather than a rear tower showing through it.
+      const tallIntersections: { left: number; top: number; right: number; bottom: number }[] = [];
+      if (def.repeatGroup === "bridge-parapet-tall" && (p.rot ?? 0) === 0) {
+        for (let otherIndex = 0; otherIndex < this.decorations.length; otherIndex++) {
+          if (otherIndex === decorationIndex) continue;
+          const other = this.decorations[otherIndex]!;
+          const otherDef = DECORATIONS[other.id];
+          const otherLayer = otherDef?.unitLayer ?? (otherDef?.foreground ? "front" : "ground");
+          const paintsOver = (layer === "behind" && otherLayer === "front") || (otherLayer === layer && otherIndex > decorationIndex);
+          if (!otherDef || !paintsOver || otherDef.repeatGroup !== def.repeatGroup || (other.rot ?? 0) !== 0) continue;
+          let otherCx = 0;
+          let otherCy = 0;
+          for (const cell of placedFootprint(other)) {
+            const point = this.hexCenter(other.x + cell.dx, other.y + cell.dy);
+            otherCx += point.cx;
+            otherCy += point.cy;
+          }
+          otherCx /= otherDef.footprint.length;
+          otherCy /= otherDef.footprint.length;
+          const left = Math.max(cx - w / 2, otherCx - w / 2);
+          const right = Math.min(cx + w / 2, otherCx + w / 2);
+          const top = Math.max(cy - h / 2 + dy, otherCy - h / 2 + dy);
+          const bottom = Math.min(cy + h / 2 + dy, otherCy + h / 2 + dy);
+          if (right > left && bottom > top) tallIntersections.push({ left, top, right, bottom });
+        }
+      }
+      if (tallIntersections.length) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(-tile * 40, -tile * 40, tile * 80, tile * 80);
+        for (const intersection of tallIntersections) {
+          ctx.rect(intersection.left, intersection.top, intersection.right - intersection.left, intersection.bottom - intersection.top);
+        }
+        ctx.clip("evenodd");
+      }      if (facing.step === 0) {
         ctx.drawImage(art, cx - w / 2, cy - h / 2 + dy, w, h);
       } else if (facing.own) {
         ctx.save();
@@ -5433,6 +5485,7 @@ export class BattleEngine {
         ctx.drawImage(art, -w / 2, -h / 2, w, h);
         ctx.restore();
       }
+      if (tallIntersections.length) ctx.restore();
     }
   }
 
@@ -5680,8 +5733,10 @@ export class BattleEngine {
       this.focusPlayers();
     }
     this.clampCam();
-    const ox = boardW < cssW ? (cssW - boardW) / 2 : -this.camX;
-    const oy = boardH < cssH ? (cssH - boardH) / 2 : -this.camY;
+    // Camera coordinates are allowed slightly negative/over the far edge so panning can
+    // reveal the backdrop around every combat map, even when the board is smaller than view.
+    const ox = -this.camX;
+    const oy = -this.camY;
     this.layout = { ox, oy, tile, cols: this.cols, rows: this.rows };
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

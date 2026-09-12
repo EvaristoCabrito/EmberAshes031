@@ -102,6 +102,8 @@ export function draftToMission(d: MapDraft): Mission {
     rows: d.rows,
     layout,
     tileVariants: d.tileVariants.some((v) => v) ? d.tileVariants : undefined,
+    baseTile: d.baseTile,
+    baseVariant: d.baseVariant,
     tileRots: d.tileRots?.some((r) => r) ? d.tileRots : undefined,
     decorations: d.decorations.length > 0 ? d.decorations : undefined,
     playerSpawns: d.playerSpawns.map(({ level: _level, ...s }) => s),

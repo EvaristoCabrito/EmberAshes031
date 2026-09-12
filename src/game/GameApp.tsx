@@ -2046,6 +2046,8 @@ function missionToDraft(m: Mission): MapDraft {
     rows: m.rows,
     tiles: parseLayout(m.layout),
     tileVariants: Array.from({ length: n }, (_, i) => variants[i] ?? 0),
+    baseTile: m.baseTile,
+    baseVariant: m.baseVariant,
     tileRots: Array.from({ length: n }, (_, i) => m.tileRots?.[i] ?? 0),
     music: m.music ?? "",
     decorations: m.decorations ?? [],
@@ -3258,10 +3260,10 @@ function MapEditorScreen({
             value=""
             onChange={(e) => {
               const id = e.target.value;
-              const m = missionById(id) ?? (() => {
-                const saved = latestSavedDraft(id);
-                return saved ? draftToMission(saved) : undefined;
-              })();
+              const saved = latestSavedDraft(id);
+              // Saved drafts carry editor-only metadata such as the chosen replacement base.
+              // Prefer that exact source when reopening a map, before its playable Mission view.
+              const m = saved ? draftToMission(saved) : missionById(id);
               if (!m) return;
               setDraft(missionToDraft(m));
               setNote(`Carregado "${m.title}" (${m.id}) no editor — ${m.cols}x${m.rows}.`);
