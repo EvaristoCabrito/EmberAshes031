@@ -1999,6 +1999,7 @@ function blankDraft(): MapDraft {
     win: "rout",
     hub: false,
     autoTactics: true,
+    fog: false,
     locationId: "",
     cols: EDITOR_COLS_DEFAULT,
     rows: EDITOR_ROWS_DEFAULT,
@@ -2041,6 +2042,7 @@ function missionToDraft(m: Mission): MapDraft {
     win: m.win,
     hub: !!m.hub,
     autoTactics: m.autoTactics !== false,
+    fog: m.fog === true,
     locationId: locationForMission(m.id)?.id ?? "",
     cols: m.cols,
     rows: m.rows,
@@ -3458,6 +3460,21 @@ function MapEditorScreen({
               }}
             />
             <span className="text-muted">Terreno automático</span>
+          </label>
+          <label className="flex items-center gap-2" title="O grupo só vê um raio em volta de si; o que já passou fica lembrado mas escuro, e inimigos sem linha de visão não aparecem nem podem ser alvo">
+            <input
+              type="checkbox"
+              checked={!!draft.fog}
+              onChange={(e) => {
+                setDraft((d) => ({ ...d, fog: e.target.checked }));
+                setNote(
+                  e.target.checked
+                    ? "Névoa ligada — inimigos fora da linha de visão não aparecem nem podem ser alvo."
+                    : "Névoa desligada — o mapa inteiro fica visível, como nas missões antigas.",
+                );
+              }}
+            />
+            <span className="text-muted">Névoa de guerra</span>
           </label>
         </div>
 

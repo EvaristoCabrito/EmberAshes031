@@ -348,6 +348,11 @@ function cleanBattle(raw: unknown, pendingMission: string | null): BattleSnapsho
     chestLoot,
     turnRestrained: b.turnRestrained === true,
     turnBegan: b.turnBegan !== false,
+    // Carried through as an opaque string: the engine owns the packing and is the only
+    // thing that can judge the length against a board, so validating it here would
+    // just be a second, weaker copy of that check.
+    explored: typeof b.explored === "string" ? b.explored : undefined,
+    awake: Array.isArray(b.awake) ? (b.awake as unknown[]).filter((id): id is string => typeof id === "string") : undefined,
   };
 }
 

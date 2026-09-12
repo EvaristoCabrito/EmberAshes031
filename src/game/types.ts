@@ -246,6 +246,12 @@ export interface Mission {
    * otherwise, so nothing already shipped changes; turn it off on a map placed by hand,
    * where the scatter would paint over deliberate work. */
   autoTactics?: boolean;
+  /** Whether this mission is played under fog of war: the party sees a radius around
+   * itself, terrain it has walked past stays remembered but dim, and enemies it has
+   * no sight of are neither drawn nor targetable. Off unless a map asks for it, so
+   * every mission shipped before fog existed plays exactly as it always did — the
+   * flag is for dungeon levels built around not seeing what is coming. */
+  fog?: boolean;
   /** Which art variant to use per tile, row-major, same indexing as layout flattened.
    * Missing/undefined index or omitted array entirely means variant 0 (the default) —
    * existing missions never set this and keep rendering exactly as before. */
@@ -677,6 +683,15 @@ export interface BattleSnapshot {
   /** True when beginUnitTurn already ran for the current actor — load must not re-apply
    * start-of-turn echo/poison/stun. False when the next unit hasn't opened their turn yet. */
   turnBegan: boolean;
+  /** Which cells the party has seen, one bit each, row-major, base64. Only written on
+   * a mission under fog; absent everywhere else, and absent reads as "nothing seen
+   * yet", which is also the right answer for a save made before fog existed since no
+   * such save can be of a fogged mission. What is currently *visible* is never stored
+   * — it falls out of where the party stands, so load recomputes it. */
+  explored?: string;
+  /** Ids of foes that have already spotted the party, so an alerted enemy stays
+   * alerted across a save. Only written under fog; absent reads as none awake. */
+  awake?: string[];
 }
 
 export interface SaveData {

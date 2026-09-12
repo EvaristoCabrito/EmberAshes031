@@ -1,5 +1,5 @@
-import { effectiveMaxRange, isProjectile, isRangedWeapon, TERRAIN } from "./data";
-import type { Point, TerrainId, Unit } from "./types";
+import { effectiveMaxRange, isProjectile, isRangedWeapon, TERRAIN } from "./data.ts";
+import type { Point, TerrainId, Unit } from "./types.ts";
 
 export function key(x: number, y: number): string {
   return `${x},${y}`;

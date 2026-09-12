@@ -1,6 +1,9 @@
-import { TIER_KEYS } from "./types";
-import type { Bag, ClassDef, ClassId, DecorationDef, DecorationPlacement, EquipmentDef, EquipSlot, HealId, Mission, PotionId, SpellKind, TerrainDef, TerrainId, TierKey, Unit, WeaponDef, WorldLocation } from "./types";
-import musicManifest from "./music-manifest.json";
+import { TIER_KEYS } from "./types.ts";
+import type { Bag, ClassDef, ClassId, DecorationDef, DecorationPlacement, EquipmentDef, EquipSlot, HealId, Mission, PotionId, SpellKind, TerrainDef, TerrainId, TierKey, Unit, WeaponDef, WorldLocation } from "./types.ts";
+// The attribute is what Node's ESM loader needs to import JSON, and it is what lets
+// `node --test` reach anything that imports this file — the fog tests included.
+// Vite and TypeScript both accept it, so it costs nothing in the app build.
+import musicManifest from "./music-manifest.json" with { type: "json" };
 
 /**
  * Board size limits, enforced by the editor's `resize` (see GameApp's map editor).
@@ -16,6 +19,17 @@ import musicManifest from "./music-manifest.json";
  */
 export const MIN_GRID = 3;
 export const MAX_GRID = 160;
+
+/**
+ * How far a unit sees under fog of war, in hexes, before terrain gets in the way.
+ *
+ * Sight uses the same blockers as shooting (`blocksShot`: columns, barricades,
+ * doors, void) rather than a list of its own, so what hides an enemy from a bow
+ * also hides it from the eye and there is one rule to reason about. Seven is a
+ * little past the longest weapon reach, so a fogged map still lets the party spot
+ * something before it can be hit by it.
+ */
+export const SIGHT_RADIUS = 7;
 
 export const TERRAIN: Record<TerrainId, TerrainDef> = {
   plains: { id: "plains", name: "Planície", moveCost: 1, def: 0, atk: 0, passable: true },

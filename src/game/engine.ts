@@ -1,4 +1,4 @@
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, isBossClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, isBossClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, SIGHT_RADIUS, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
 import type { SpellTier } from "./data";
 import { canCounter, makeForecast, mulberry32, powerOf, protOf, rollDamage, rollDamageCustom } from "./combat";
 import {
@@ -13,6 +13,7 @@ import {
   footprintFrontRow,
   hexNeighbors,
   hexDist,
+  hexLine,
   inBounds,
   inWeaponRange,
   key,
@@ -28,6 +29,7 @@ import {
   unitSize,
   type ReachCell,
 } from "./pathfinding";
+import { packExplored, relight, sightReaches, unpackExplored } from "./fog";
 import { sfxPlay } from "./audio";
 import type {
   Bag,
@@ -726,6 +728,26 @@ export class BattleEngine {
   private fieldCache = new Map<string, Map<string, number>>();
   private fieldStamp = "";
   private terrainVersion = 0;
+  /**
+   * Fog of war, one byte per cell, row-major like `tiles`.
+   *
+   *   0 unseen   — never in sight; drawn as nothing at all
+   *   1 explored — walked past and remembered: terrain draws dim, but whatever
+   *                moves through it does not, because memory is not sight
+   *   2 visible  — in sight of a living party member this instant
+   *
+   * Empty when `mission.fog` is off, and every read goes through `visible`/`explored`
+   * which answer true for everything in that case, so the twenty missions that
+   * shipped before fog behave exactly as they did.
+   *
+   * Recomputed when the party moves rather than per frame — sight only changes when
+   * someone walks, dies or the board does (see refreshVisibility).
+   */
+  private vis: Uint8Array = new Uint8Array(0);
+  private visStamp = "";
+  /** Foes that have already spotted the party, so waking sticks. Ids rather than a
+   * flag on Unit, which keeps it out of the per-unit save validation. */
+  private awake = new Set<string>();
   /** All alive units for this round, sorted by CLASSES[classId].init (lower first, ties favor the player). */
   private turnOrder: string[] = [];
   /** id of the unit whose turn we've already dispatched — lets the tick loop react only on change. */
@@ -929,7 +951,9 @@ export class BattleEngine {
     const terr = hoverCell ? TERRAIN[tileAt(this.tiles, this.cols, hoverCell.x, hoverCell.y)] : null;
     const inspected = this.units.find((u) => u.id === this.inspectedId) ?? null;
     const pendingFoe = this.units.find((u) => u.id === this.pendingFoeId) ?? null;
-    const foeForForecast = pendingFoe ?? (inspected && attackableByPlayer(inspected) ? inspected : null);
+    // A foe out of sight gets no damage forecast either — the HUD must not leak what
+    // the board is hiding.
+    const foeForForecast = pendingFoe ?? (this.targetable(inspected ?? undefined) ? inspected : null);
     let forecast: Forecast | null = null;
     if (selected && foeForForecast && selected.side === "player") {
       const from = this.attackFrom.get(foeForForecast.id);
@@ -1186,6 +1210,8 @@ export class BattleEngine {
         : null,
       turnRestrained: this.turnRestrained,
       turnBegan: !!this.activeTurnUnit() && this.activeUnitId === this.activeTurnUnit()?.id,
+      explored: this.snapshotExplored(),
+      awake: this.fogged && this.awake.size > 0 ? [...this.awake] : undefined,
     };
   }
 
@@ -1241,6 +1267,10 @@ export class BattleEngine {
     this.turnStart = null;
     this.moveSpoiled = true;
     this.skipStartOfTurn = snap.turnBegan;
+    // After units and tiles are in place, so the length check has the right board and
+    // the first refreshVisibility relights around wherever the party actually landed.
+    this.restoreExplored(snap.explored);
+    this.awake = new Set(snap.awake ?? []);
     this.activeUnitId = null;
     const first = this.units.find((u) => u.side === "player" && u.alive);
     if (first) {
@@ -2663,7 +2693,7 @@ export class BattleEngine {
     this.orig = { x: unit.x, y: unit.y };
     this.origMoveBudgetUsed = unit.moveBudgetUsed;
     this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units);
-    this.attackFrom = unit.acted ? new Map() : attackableEnemies(unit, this.reach, this.units, this.tiles, this.cols);
+    this.attackFrom = unit.acted ? new Map() : this.visibleAttackTargets(unit);
     this.threat = [];
     this.mode = "selected";
     this.tip = null;
@@ -2730,7 +2760,7 @@ export class BattleEngine {
     this.selectedId = u.id;
     this.mode = "selected";
     this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
-    this.attackFrom = attackableEnemies(u, this.reach, this.units, this.tiles, this.cols);
+    this.attackFrom = this.visibleAttackTargets(u);
     this.ensureVisible(u.x, u.y);
     this.centerOn(u.x, u.y);
     this.tip = `${u.name} voltou ao ponto de partida — ${u.mov} de movimento de volta.`;
@@ -3296,6 +3326,143 @@ export class BattleEngine {
     return cap === u.mov ? u : { ...u, mov: cap };
   }
 
+  /** Whether this mission hides anything at all. */
+  get fogged(): boolean {
+    return this.mission.fog === true;
+  }
+
+  /** In sight of the party right now. Always true on a mission without fog. */
+  visible(x: number, y: number): boolean {
+    if (!this.fogged) return true;
+    return this.vis[y * this.cols + x] === 2;
+  }
+
+  /** Seen at least once — visible now, or remembered. True everywhere without fog. */
+  explored(x: number, y: number): boolean {
+    if (!this.fogged) return true;
+    return (this.vis[y * this.cols + x] ?? 0) > 0;
+  }
+
+  /** Whether a unit is hidden from the player: any cell of its footprint in sight
+   * reveals the whole of it, so a big body never half-appears. */
+  private unitHidden(u: Unit): boolean {
+    if (!this.fogged || u.side === "player") return false;
+    return !footprint(u).some((p) => this.visible(p.x, p.y));
+  }
+
+  /**
+   * Whether the player may swing at, shoot or cast on this unit — `attackableByPlayer`
+   * plus sight. Every enemy-targeting branch of spellAimValid and the attack picker
+   * funnel through here, which is the whole of "you cannot aim at what you cannot
+   * see": a foe standing in the dark is not a legal target, so no spell arms on it
+   * and no attack offers itself.
+   *
+   * Fog does not go the other way. `occ` stays sight-blind, so an unseen body still
+   * blocks a step and still stops an arrow — walking through one because the party
+   * had not spotted it yet would be a worse lie than not being able to shoot it.
+   */
+  private targetable(u: Unit | undefined): u is Unit {
+    if (!u || !attackableByPlayer(u)) return false;
+    return !this.unitHidden(u);
+  }
+
+  /**
+   * `attackableEnemies` filtered down to foes the party can actually see.
+   *
+   * The underlying pass is sight-blind on purpose — it is shared with the enemy AI,
+   * which has no business consulting the player's fog. Dropping hidden foes here
+   * keeps the attack offers, and the highlights drawn from them, honest without
+   * teaching the pathfinder about fog.
+   */
+  private visibleAttackTargets(unit: Unit): Map<string, Point> {
+    const reach = this.reach;
+    const all = attackableEnemies(unit, reach, this.units, this.tiles, this.cols);
+    if (!this.fogged) return all;
+    for (const id of [...all.keys()]) {
+      const foe = this.units.find((u) => u.id === id);
+      if (!foe || this.unitHidden(foe)) all.delete(id);
+    }
+    return all;
+  }
+
+  /**
+   * Recompute sight if the party has moved since the last pass.
+   *
+   * Cells already marked explored stay explored — fog lifts and never falls back to
+   * unseen. The stamp is the party's own layout, so this is a cheap no-op on the
+   * frames and turns where nobody walked.
+   *
+   * Cost is O(party x radius^2), independent of how big the board is: a 160x160
+   * dungeon costs exactly what a 20x16 skirmish does.
+   */
+  private refreshVisibility(): void {
+    if (!this.fogged) return;
+    const cells = this.cols * this.rows;
+    if (this.vis.length !== cells) {
+      this.vis = new Uint8Array(cells);
+      this.visStamp = "";
+    }
+    let stamp = `${this.terrainVersion}`;
+    for (const u of this.units) {
+      if (u.side !== "player" || !u.alive) continue;
+      stamp += `|${u.id}:${u.x},${u.y}`;
+    }
+    if (stamp === this.visStamp) return;
+    this.visStamp = stamp;
+
+    // Every cell a living party member stands on is an eye, so a four-hex body sees
+    // around its whole bulk rather than from one nominal corner of it.
+    const eyes: Point[] = [];
+    for (const u of this.units) {
+      if (u.side !== "player" || !u.alive) continue;
+      eyes.push(...footprint(u));
+    }
+    relight(this.vis, eyes, SIGHT_RADIUS, this.tiles, this.cols, this.rows);
+  }
+
+  /**
+   * Whether this foe is allowed to act, waking it if it can see the party.
+   *
+   * Always true without fog. Under fog a foe starts asleep and wakes the moment any
+   * living party member is inside its own sight — its own, not the party's `vis`,
+   * since the two see different things and reading the player's fog here would let a
+   * foe act on knowledge it does not have.
+   *
+   * Waking sticks, and is remembered in the save: a foe that loses sight again keeps
+   * hunting, because one that forgot the instant the party stepped behind a pillar
+   * could be shaken off by walking one hex sideways.
+   *
+   * Known gap: a shot from beyond its sight radius does not wake it, so a long enough
+   * bow can pick off a sleeping foe. Waking on damage needs a hook in the damage path
+   * and is worth doing on its own.
+   */
+  private wakeIfSeesParty(foe: Unit): boolean {
+    if (!this.fogged) return true;
+    if (this.awake.has(foe.id)) return true;
+    for (const p of this.units) {
+      if (p.side !== "player" || !p.alive) continue;
+      if (hexDist(foe, p) > SIGHT_RADIUS) continue;
+      if (!sightReaches(foe, p, this.tiles, this.cols)) continue;
+      this.awake.add(foe.id);
+      return true;
+    }
+    return false;
+  }
+
+  /** Explored cells for the save, or absent on a mission without fog. */
+  private snapshotExplored(): string | undefined {
+    if (!this.fogged || this.vis.length === 0) return undefined;
+    return packExplored(this.vis);
+  }
+
+  /** Restore explored cells, falling back to nothing seen when the save carries none
+   * or carries a bitset that does not fit this board — see unpackExplored. */
+  private restoreExplored(encoded: string | undefined): void {
+    const cells = this.cols * this.rows;
+    this.visStamp = "";
+    this.vis = (this.fogged && encoded ? unpackExplored(encoded, cells) : null) ?? new Uint8Array(cells);
+  }
+
   /** Who stands where, rebuilt only when the layout actually moved. See `occCache`. */
   private occ(): Map<string, Unit> {
     const n = this.units.length;
@@ -3366,24 +3533,24 @@ export class BattleEngine {
     if (this.spellKind === "longShot") {
       const d = manhattan(caster, cell);
       const here = this.occ().get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || d < caster.minRange || d > this.longMax(caster)) return false;
+      if (!this.targetable(here) || d < caster.minRange || d > this.longMax(caster)) return false;
       return clearShot(caster, cell, this.tiles, this.cols, "arrow");
     }
     if (this.spellKind === "piercing") return this.piercingRay(caster, cell) !== null;
     if (this.spellKind === "piercingThrust") return this.piercingThrustRay(caster, cell) !== null;
     if (this.spellKind === "lightning") {
       const here = this.occ().get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > LIGHTNING.range) return false;
+      if (!this.targetable(here) || manhattan(caster, cell) > LIGHTNING.range) return false;
       return true;
     }
     if (this.spellKind === "lightningTier3") {
       const here = this.occ().get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > LIGHTNING_T3.range) return false;
+      if (!this.targetable(here) || manhattan(caster, cell) > LIGHTNING_T3.range) return false;
       return true;
     }
     if (this.spellKind === "shock") {
       const here = this.occ().get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > SHOCK.range) return false;
+      if (!this.targetable(here) || manhattan(caster, cell) > SHOCK.range) return false;
       return true;
     }
     if (this.spellKind === "sweep") {
@@ -3391,7 +3558,7 @@ export class BattleEngine {
     }
     if (this.spellKind === "magicMissile") {
       const here = this.occ().get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > MAGIC_MISSILE.range) return false;
+      if (!this.targetable(here) || manhattan(caster, cell) > MAGIC_MISSILE.range) return false;
       return clearShot(caster, cell, this.tiles, this.cols, "bolt");
     }
     if (this.spellKind === "summonFamiliar") {
@@ -3414,7 +3581,7 @@ export class BattleEngine {
     if (this.spellKind === "multiShot") {
       const d = manhattan(caster, cell);
       const here = this.occ().get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || d < caster.minRange || d > caster.maxRange + MULTI_SHOT.rangeBonus) return false;
+      if (!this.targetable(here) || d < caster.minRange || d > caster.maxRange + MULTI_SHOT.rangeBonus) return false;
       return clearShot(caster, cell, this.tiles, this.cols, "arrow");
     }
     if (this.spellKind === "divineWrath") return this.wrathRay(caster, cell, DIVINE_WRATH.range) !== null;
@@ -4564,7 +4731,7 @@ export class BattleEngine {
       this.turnStart = { x: u.x, y: u.y };
       this.moveSpoiled = resumed;
       this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
-      this.attackFrom = u.acted ? new Map() : attackableEnemies(u, this.reach, this.units, this.tiles, this.cols);
+      this.attackFrom = u.acted ? new Map() : this.visibleAttackTargets(u);
       this.threat = [];
       this.mode = "selected";
       this.tip = null;
@@ -4640,6 +4807,15 @@ export class BattleEngine {
   }
 
   private runAiFor(next: Unit): void {
+    // Under fog, a foe that has not seen the party yet holds its ground. Without this
+    // the whole point of fog is lost from the other side: the party creeps through a
+    // dark corridor while every enemy on the level walks straight at them, having been
+    // told where they are by a turn loop rather than by seeing them.
+    if (!this.wakeIfSeesParty(next)) {
+      next.moved = true;
+      next.acted = true;
+      return;
+    }
     this.smashBarricades(next);
     const reach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units);
     // Every move this function queues has to be reconstructed off this unpruned pass, not
@@ -5056,7 +5232,7 @@ export class BattleEngine {
       this.select(here);
       return;
     }
-    if (here && attackableByPlayer(here)) {
+    if (this.targetable(here)) {
       if (selected && !selected.acted && this.mode === "awaitOffHand") {
         if (canHitFrom(selected, selected, here, this.tiles, this.cols)) {
           this.commitOffHandAction(selected, here, { x: selected.x, y: selected.y });
@@ -5167,7 +5343,7 @@ export class BattleEngine {
       this.selectedId = unit.id;
       this.mode = "selected";
       this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units);
-      this.attackFrom = attackableEnemies(unit, this.reach, this.units, this.tiles, this.cols);
+      this.attackFrom = this.visibleAttackTargets(unit);
       after?.();
     };
   }
@@ -5465,6 +5641,10 @@ export class BattleEngine {
       }
       const decorLayer = def?.unitLayer ?? (def?.foreground ? "front" : "ground");
       if (!def || !img || decorLayer !== layer) continue;
+      // Props are part of the ground, so they follow the terrain rule: remembered once
+      // walked past, hidden while never seen. One explored cell shows the whole prop —
+      // a five-hex parapet half-drawn at a fog edge would read as broken art.
+      if (this.fogged && !placedFootprint(p).some((f) => this.explored(p.x + f.dx, p.y + f.dy))) continue;
       let minDx = 0;
       let maxDx = 0;
       let minDy = 0;
@@ -5829,6 +6009,10 @@ export class BattleEngine {
     if (u.diseased) layer(false);
   }
   render(ctx: CanvasRenderingContext2D, cssW: number, cssH: number, dpr: number): void {
+    // Cheap no-op unless the party moved since the last frame — see refreshVisibility.
+    // Sitting here means anything drawn, and anything the HUD reads off this engine,
+    // is deciding against current sight rather than last turn's.
+    this.refreshVisibility();
     const sqrt3 = Math.sqrt(3);
     const tile = ZOOM_RADII[this.zoom]!;
     const { w: boardW, h: boardH } = this.boardSize(tile);
@@ -5879,6 +6063,9 @@ export class BattleEngine {
       for (let x = 0; x < this.cols; x++) {
         const { cx, cy } = this.hexCenter(x, y);
         if (cx < -tile * 2 || cy < -tile * 2 || cx > cssW + tile * 2 || cy > cssH + tile * 2) continue;
+        // Never seen: draw nothing at all. Cheaper than the clipped path below, which is
+        // why fog makes a big fogged board lighter to draw rather than heavier.
+        if (!this.explored(x, y)) continue;
         const id = tileAt(this.tiles, this.cols, x, y);
         const drawId = id === "chest" ? this.visualFloorAt(x, y) : id;
         const variants = this.art.tiles[drawId];
@@ -5887,6 +6074,9 @@ export class BattleEngine {
         ctx.save();
         this.hexPath(ctx, cx, cy, tile * 1.0);
         ctx.clip();
+        // Remembered but not in sight: the ground the party walked past, dimmed so it
+        // reads as recall rather than as somewhere they can currently see into.
+        if (!this.visible(x, y)) ctx.globalAlpha = 0.38;
         // A turned hex spins about its own centre, inside the clip. Sixty degrees maps a
         // hexagon onto itself, so only the picture moves — the shape stays put and the
         // neighbours still line up.
@@ -6144,6 +6334,10 @@ export class BattleEngine {
     const sorted = [...this.units].sort((a, b) => a.drawY - b.drawY || a.drawX - b.drawX);
     for (const u of sorted) {
       if (u.fade <= 0) continue;
+      // Out of sight, off the board. Unlike terrain there is no remembered version of a
+      // body: a unit the party cannot see is simply not drawn, because a ghost left at
+      // the last place it was seen would be read as where it is now.
+      if (this.unitHidden(u)) continue;
       const s = unitSize(u);
       const boss = isBossClass(u.classId);
       const { cx: px, cy: py } = this.unitPixel(u);
