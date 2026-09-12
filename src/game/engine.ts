@@ -5391,7 +5391,6 @@ export class BattleEngine {
       const n = def.footprint.length;
       const cx = sumCx / n;
       const cy = sumCy / n;
-      if (cx < -tile * 4 || cy < -tile * 4 || cx > cssW + tile * 4 || cy > cssH + tile * 4) continue;
       const one = def.footprint.length === 1;
       const item = p.id === "locked-chest";
       const tree = p.id === "dead-tree";
@@ -5428,6 +5427,17 @@ export class BattleEngine {
       // Taller near-side props rise upward from their ground anchor instead of stretching
       // equally in both directions. That preserves the shallow isometric perspective.
       const dy = (tree ? -tile * 0.55 : wall ? -tile * 0.12 : house ? -tile * 0.28 : item ? tile * 0.08 : 0) - (h - baseH) * 0.42;
+      // Cull on the box actually drawn, which is why this sits after the sizing above and
+      // not up by the centre. Every branch below centres the image on `(cx, cy + dy)`, so
+      // one bounding circle bounds the turned cases as well as the straight one.
+      //
+      // The previous test allowed the centre a flat `tile * 4` of slack, but a prop is only
+      // as cullable as it is wide: a row of five spans `SQRT3 * (4 + 1.7) / 2 ≈ 4.94` tiles
+      // either side of its centre, and a row of four `≈ 4.07`. Both exceed 4, so a bridge
+      // parapet straddling a screen edge was dropped whole while part of it still belonged
+      // on screen. Deriving the reach from `w`/`h` keeps that honest for any footprint.
+      const reach = Math.hypot(w, h) / 2;
+      if (cx + reach < 0 || cx - reach > cssW || cy + dy + reach < 0 || cy + dy - reach > cssH) continue;
       // Facing art if the prop has it, the way isometric games do it: a drawing per facing,
       // mirrored to cover the opposite one. Only when a facing has no drawing do we fall
       // back to turning the bitmap, which tilts rather than faces and is a placeholder.
