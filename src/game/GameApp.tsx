@@ -25,7 +25,7 @@ import {
   writeSlot,
   selectSlot,
 } from "./save";
-import type { BattleSnapshot, ClassId, EquipSlot, GameArt, GrowthLine, HudSnapshot, Mission, PotionId, SaveBank, SaveData, ScreenId, SpellKind, Spawn, TerrainId, UnitPublic, WinCondition, WorldLocation } from "./types";
+import type { BattleSnapshot, ClassId, DecorationPlacement, EquipSlot, GameArt, GrowthLine, HudSnapshot, Mission, PotionId, SaveBank, SaveData, ScreenId, SpellKind, Spawn, TerrainId, UnitPublic, WinCondition, WorldLocation } from "./types";
 
 /** A map JSON write updates Vite's module list and can reload the app. This one-shot
  * snapshot restores the editor instead of sending the author to the title screen. */
@@ -2274,6 +2274,7 @@ const TERRAIN_SWATCH: Record<TerrainId, string> = {
   door: "#4a3524",
   deadtree: "#4a3f2a",
   void: "#050505",
+  crag: "#55524d",
 };
 
 const BUILDER_TERRAIN: TerrainId[] = [
@@ -2295,6 +2296,10 @@ const BUILDER_TERRAIN: TerrainId[] = [
   "chest",
   "door",
   "void",
+  // "crag" is deliberately not here either: it is what a decoration's two rule switches
+  // resolve to when both are on (see overrideTerrain), not something to paint by hand. A
+  // map that already has one keeps it — TILE_CHAR round-trips it — but authoring goes one
+  // way, through the prop.
 ];
 
 const VARIANT_LABEL: Partial<Record<TerrainId, string[]>> = {
@@ -2829,6 +2834,48 @@ function MapEditorScreen({
       return { ...d, tiles, tileVariants, tileRots, decorations: d.decorations.map((p) => (p === hit ? turned : p)) };
     });
   };
+
+  /** The placement the two rule switches act on — the one clicked in the map. */
+  const selectedPlacement = selectedPlacedDecoration
+    ? draft.decorations.find(
+        (p) =>
+          p.id === selectedPlacedDecoration.id &&
+          p.x === selectedPlacedDecoration.x &&
+          p.y === selectedPlacedDecoration.y &&
+          (p.rot ?? 0) === (selectedPlacedDecoration.rot ?? 0),
+      )
+    : undefined;
+
+  /**
+   * Flip one of a placement's rule switches. Off is stored as absent rather than
+   * `false`, which keeps a saved map's JSON to what an author actually turned on and
+   * matches how `rot` and `autoTactics` are already written.
+   */
+  const toggleDecorationRule = useCallback(
+    (flag: "blocksPath" | "yieldsHighGround") => {
+      const selected = selectedPlacedDecoration;
+      if (!selected) {
+        setNote("Clique em qualquer hex de uma decoração no mapa antes de mudar as regras dela.");
+        return;
+      }
+      setDraft((d) => {
+        const hit = d.decorations.find(
+          (p) => p.id === selected.id && p.x === selected.x && p.y === selected.y && (p.rot ?? 0) === (selected.rot ?? 0),
+        );
+        if (!hit) {
+          setNote("Essa decoração já não está no mapa.");
+          return d;
+        }
+        const turningOn = !hit[flag];
+        const next: DecorationPlacement = { ...hit, [flag]: turningOn ? true : undefined };
+        const name = DECORATIONS[hit.id]?.name ?? hit.id;
+        const label = flag === "blocksPath" ? "Bloquear caminho" : "Alto terreno";
+        setNote(`${name}: ${label} ${turningOn ? "ligado" : "desligado"}.`);
+        return { ...d, decorations: d.decorations.map((p) => (p === hit ? next : p)) };
+      });
+    },
+    [selectedPlacedDecoration, setNote],
+  );
 
   const removeSelectedDecoration = useCallback(() => {
     const selected = selectedPlacedDecoration;
@@ -3666,6 +3713,45 @@ function MapEditorScreen({
                   );
                 })}
               </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 border border-border rounded-md p-2 bg-bg/40">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="uppercase tracking-wide text-muted">Regras da decoração</span>
+                <span className="text-muted">
+                  {selectedPlacement
+                    ? `${DECORATIONS[selectedPlacement.id]?.name ?? selectedPlacement.id} em ${selectedPlacement.x},${selectedPlacement.y}`
+                    : "clique numa decoração no mapa"}
+                </span>
+              </div>
+              <label
+                className={`flex items-center gap-2 text-sm ${selectedPlacement ? "" : "opacity-50"}`}
+                title="Ligado, o hexágono deixa de ser navegável. Nesta engine sólido é sólido: também passa a barrar flecha e névoa."
+              >
+                <input
+                  type="checkbox"
+                  disabled={!selectedPlacement}
+                  checked={!!selectedPlacement?.blocksPath}
+                  onChange={() => toggleDecorationRule("blocksPath")}
+                />
+                <span className="text-muted">Bloquear caminho</span>
+              </label>
+              <label
+                className={`flex items-center gap-2 text-sm ${selectedPlacement ? "" : "opacity-50"}`}
+                title="Ligado, quem estiver no hexágono recebe os bônus de terreno alto: +2 de dano, +1 de alcance para arco. Com Bloquear caminho também ligado vira rochedo — ninguém sobe, e flecha de quem está embaixo não passa por cima."
+              >
+                <input
+                  type="checkbox"
+                  disabled={!selectedPlacement}
+                  checked={!!selectedPlacement?.yieldsHighGround}
+                  onChange={() => toggleDecorationRule("yieldsHighGround")}
+                />
+                <span className="text-muted">Alto terreno</span>
+              </label>
+              <p className="text-xs text-muted">
+                Os dois só acrescentam: desligados, o hexágono mantém a regra do terreno que está embaixo. Uma barricada
+                segue intransponível com "Bloquear caminho" desligado, porque é a definição dela que a torna sólida.
+              </p>
             </div>
           </div>
         )}

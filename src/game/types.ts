@@ -28,7 +28,7 @@ export interface Spells {
 export const TIER_KEYS = ["tier1", "tier2", "tier3", "tier4", "tier5", "tier6", "tier7", "tier8", "tier9", "tier10"] as const;
 export type TierKey = (typeof TIER_KEYS)[number];
 
-export type TerrainId = "plains" | "woods" | "ruins" | "water" | "ember" | "hill" | "flame" | "column" | "nave" | "barricade" | "highwood" | "highruin" | "chest" | "door" | "deadtree" | "void";
+export type TerrainId = "plains" | "woods" | "ruins" | "water" | "ember" | "hill" | "flame" | "column" | "nave" | "barricade" | "highwood" | "highruin" | "chest" | "door" | "deadtree" | "void" | "crag";
 /** Which faction a unit fights for.
  *
  * "neutral" is the wild-beast side: it holds its ground (never enters the turn order, so it
@@ -219,6 +219,22 @@ export interface DecorationPlacement {
    * every 60 degrees, so those are the only turns whose footprint still lands on real
    * hexes. Optional: a map saved before props could turn has no such key, read as 0. */
   rot?: number;
+  /**
+   * Per-placement rule overrides, set by the two switches in the map editor.
+   *
+   * Both are additive: absent or false adds nothing and the hex keeps whatever the
+   * prop's `DecorationDef.tile` (or the painted terrain) already said, so no map saved
+   * before these existed changes behaviour. They cannot take a property away — a
+   * barricade stays impassable with `blocksPath` off, because its definition is what
+   * makes it solid.
+   *
+   * They work by choosing the terrain stamped under the prop when the board loads, not
+   * by adding a second place where rules live: everything in this engine reads movement,
+   * cover and line of sight off `tiles` alone (see footprintCost, clearShot), and the
+   * comment on DecorationDef.tile explains why that is worth keeping.
+   */
+  blocksPath?: boolean;
+  yieldsHighGround?: boolean;
 }
 
 export interface Mission {

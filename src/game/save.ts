@@ -1,4 +1,4 @@
-import { EQUIPMENT, EXP_TO_LEVEL, MAX_LEVEL, POTION_CARRY_MAX, BAG_MAX, PROMOTIONS, WEAPONS, emberFromCompleted, starterWeaponFor, startingBags } from "./data";
+import { EQUIPMENT, EXP_TO_LEVEL, MAX_GRID, MAX_LEVEL, POTION_CARRY_MAX, BAG_MAX, PROMOTIONS, WEAPONS, emberFromCompleted, starterWeaponFor, startingBags } from "./data";
 import { ALL_MISSIONS } from "./mapstore";
 import { TIER_KEYS } from "./types";
 import type { Bag, BattleSnapshot, BattleUnitSnap, ClassId, EquipSlot, Phase, SaveBank, SaveData, Side, TerrainId, TierKey } from "./types";
@@ -225,8 +225,10 @@ function cleanBattleUnit(raw: unknown): BattleUnitSnap | null {
     name: u.name,
     classId: u.classId as ClassId,
     side,
-    x: clampInt(u.x, 0, 64),
-    y: clampInt(u.y, 0, 64),
+    // Bounded by the board ceiling, not a literal: a 64 here silently walked units
+    // and props back onto column 64 the moment boards could be wider than that.
+    x: clampInt(u.x, 0, MAX_GRID - 1),
+    y: clampInt(u.y, 0, MAX_GRID - 1),
     hp: clampInt(u.hp, 0, 999),
     maxHp: clampInt(u.maxHp, 1, 999),
     atk: clampInt(u.atk, 0, 99),
@@ -283,9 +285,11 @@ function cleanBattle(raw: unknown, pendingMission: string | null): BattleSnapsho
         .filter((d): d is { id: string; x: number; y: number; rot?: number } => !!d && typeof d === "object" && typeof (d as { id?: unknown }).id === "string")
         .map((d) => ({
           id: (d as { id: string }).id,
-          x: clampInt((d as { x?: unknown }).x, 0, 64),
-          y: clampInt((d as { y?: unknown }).y, 0, 64),
+          x: clampInt((d as { x?: unknown }).x, 0, MAX_GRID - 1),
+          y: clampInt((d as { y?: unknown }).y, 0, MAX_GRID - 1),
           rot: typeof (d as { rot?: unknown }).rot === "number" ? clampInt((d as { rot?: unknown }).rot, 0, 5) : undefined,
+          blocksPath: (d as { blocksPath?: unknown }).blocksPath === true ? true : undefined,
+          yieldsHighGround: (d as { yieldsHighGround?: unknown }).yieldsHighGround === true ? true : undefined,
         }))
     : [];
   const turnOrder = Array.isArray(b.turnOrder) ? (b.turnOrder as unknown[]).filter((id): id is string => typeof id === "string") : units.map((u) => u.id);

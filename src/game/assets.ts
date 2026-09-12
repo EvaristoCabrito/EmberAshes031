@@ -22,6 +22,7 @@ export const TILE_VARIANT_COUNT: Record<TerrainId, number> = {
   door: 1,
   deadtree: 1,
   void: 1,
+  crag: 1,
 };
 
 /** The art file a tile variant paints with, without path or cache-buster — "woods002".
@@ -43,6 +44,10 @@ export function tileVariantName(id: TerrainId, variant: number): string {
     if (variant === 6) return "woods007";
     return `woods${String(variant - 1).padStart(3, "0")}`;
   }
+  // Borrowed art: a crag has no drawing of its own yet, and loadGameArt rejects on any
+  // missing file, so pointing it at the column rock keeps the boot intact. A tall rock
+  // reads correctly for it, and the prop that stamped it draws over the top anyway.
+  if (id === "crag") return "column001";
   if (id === "hill") return `hill${String(variant + 4).padStart(3, "0")}`;
   if (id === "ruins") {
     if (variant === 0) return "ruins005";
