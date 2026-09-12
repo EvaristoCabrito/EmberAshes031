@@ -48,6 +48,9 @@ export interface MapDraft {
   /** False to load this map exactly as painted, with no procedural scatter over it — see
    * Mission.autoTactics. Carried through Exportar so a map pasted into data.ts keeps it. */
   autoTactics: boolean;
+  /** True to play this map under fog of war — see Mission.fog. Absent on every map
+   * saved before fog existed, which reads as off. */
+  fog?: boolean;
   /** Which world map location this map hangs off, by WorldLocation.id — "" for a map
    * that shouldn't appear on the map at all. A map already reachable through its
    * scenario's own location keeps showing up there whatever this says; this is what
@@ -112,6 +115,7 @@ export function draftToMission(d: MapDraft): Mission {
     music: d.music || undefined,
     hub: d.hub || undefined,
     autoTactics: d.autoTactics ? undefined : false,
+    fog: d.fog ? true : undefined,
   };
 }
 

@@ -6,7 +6,7 @@ import { installAudioUnlock, playFile, playMenuMusic, playTheme, resumeAudio, se
 import { BattleCanvas } from "./BattleCanvas";
 import { InnScreen } from "./InnScreen";
 import { PartyInventoryOverlay, ItemTip } from "./InventoryScreens";
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, CURE_DISEASE, CURES, DECORATIONS, DOUBLE_STRIKE, doubleStrikeFormula, EQUIPMENT, EXP_TO_LEVEL, FIREBALL, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, MAGIC_MISSILE, PIERCING, piercingMul, PIERCING_THRUST, MAX_LEVEL, POTIONS, POTION_LOOT_WEIGHT, PROMOTE_LEVEL, PROMOTED_BASE, PROMOTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, TERRAIN, WEAPONS, WEAPON_MAX_ENH, WEB_OF_DREAMS, BAG_MAX, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, barricadeDecor, decorationCells, placedFootprint, decorationImage, diceFormula, emberForKill, enemyLevelFor, equippedPouchId, fireballFormula, healFormula, lightningFormula, lightningTier3Formula, dressMap, isSummonClass, MUSIC_TRACKS, SUMMON_CLASSES, parseLayout, potionLabel, potionTooltip, lockpickTooltip, pouchIcon, rangeLabel, sheetLine, spellFormula, spellTier, spellUseGains, startingBags, statsFor, terrainNote, tierKey, tierUses, weaponEnhCost, weaponSellValue, equipmentFitsSlot, MULTI_SHOT, multiShotFormula, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, STAMPEDE, stampedeFormula, type SpellTier } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, CURE_DISEASE, CURES, DECORATIONS, DOUBLE_STRIKE, doubleStrikeFormula, EQUIPMENT, EXP_TO_LEVEL, FIREBALL, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, MAGIC_MISSILE, PIERCING, piercingMul, PIERCING_THRUST, MAX_GRID, MAX_LEVEL, MIN_GRID, POTIONS, POTION_LOOT_WEIGHT, PROMOTE_LEVEL, PROMOTED_BASE, PROMOTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, TERRAIN, WEAPONS, WEAPON_MAX_ENH, WEB_OF_DREAMS, BAG_MAX, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, barricadeDecor, decorationCells, placedFootprint, decorationImage, diceFormula, emberForKill, enemyLevelFor, equippedPouchId, fireballFormula, healFormula, lightningFormula, lightningTier3Formula, dressMap, isSummonClass, MUSIC_TRACKS, SUMMON_CLASSES, parseLayout, potionLabel, potionTooltip, lockpickTooltip, pouchIcon, rangeLabel, sheetLine, spellFormula, spellTier, spellUseGains, startingBags, statsFor, terrainNote, tierKey, tierUses, weaponEnhCost, weaponSellValue, equipmentFitsSlot, MULTI_SHOT, multiShotFormula, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, STAMPEDE, stampedeFormula, type SpellTier } from "./data";
 import { BattleEngine } from "./engine";
 import { MapPreviewCanvas, type PreviewUnitSelection } from "./MapPreviewCanvas";
 import { WorldMapScreen } from "./WorldMapScreen";
@@ -25,7 +25,7 @@ import {
   writeSlot,
   selectSlot,
 } from "./save";
-import type { BattleSnapshot, ClassId, EquipSlot, GameArt, GrowthLine, HudSnapshot, Mission, PotionId, SaveBank, SaveData, ScreenId, SpellKind, Spawn, TerrainId, UnitPublic, WinCondition, WorldLocation } from "./types";
+import type { BattleSnapshot, ClassId, DecorationPlacement, EquipSlot, GameArt, GrowthLine, HudSnapshot, Mission, PotionId, SaveBank, SaveData, ScreenId, SpellKind, Spawn, TerrainId, UnitPublic, WinCondition, WorldLocation } from "./types";
 
 /** A map JSON write updates Vite's module list and can reload the app. This one-shot
  * snapshot restores the editor instead of sending the author to the title screen. */
@@ -1999,6 +1999,7 @@ function blankDraft(): MapDraft {
     win: "rout",
     hub: false,
     autoTactics: true,
+    fog: false,
     locationId: "",
     cols: EDITOR_COLS_DEFAULT,
     rows: EDITOR_ROWS_DEFAULT,
@@ -2041,6 +2042,7 @@ function missionToDraft(m: Mission): MapDraft {
     win: m.win,
     hub: !!m.hub,
     autoTactics: m.autoTactics !== false,
+    fog: m.fog === true,
     locationId: locationForMission(m.id)?.id ?? "",
     cols: m.cols,
     rows: m.rows,
@@ -2828,6 +2830,48 @@ function MapEditorScreen({
     });
   };
 
+  /** The placement the two rule switches act on — the one clicked in the map. */
+  const selectedPlacement = selectedPlacedDecoration
+    ? draft.decorations.find(
+        (p) =>
+          p.id === selectedPlacedDecoration.id &&
+          p.x === selectedPlacedDecoration.x &&
+          p.y === selectedPlacedDecoration.y &&
+          (p.rot ?? 0) === (selectedPlacedDecoration.rot ?? 0),
+      )
+    : undefined;
+
+  /**
+   * Flip one of a placement's rule switches. Off is stored as absent rather than
+   * `false`, which keeps a saved map's JSON to what an author actually turned on and
+   * matches how `rot` and `autoTactics` are already written.
+   */
+  const toggleDecorationRule = useCallback(
+    (flag: "blocksPath" | "yieldsHighGround") => {
+      const selected = selectedPlacedDecoration;
+      if (!selected) {
+        setNote("Clique em qualquer hex de uma decoração no mapa antes de mudar as regras dela.");
+        return;
+      }
+      setDraft((d) => {
+        const hit = d.decorations.find(
+          (p) => p.id === selected.id && p.x === selected.x && p.y === selected.y && (p.rot ?? 0) === (selected.rot ?? 0),
+        );
+        if (!hit) {
+          setNote("Essa decoração já não está no mapa.");
+          return d;
+        }
+        const turningOn = !hit[flag];
+        const next: DecorationPlacement = { ...hit, [flag]: turningOn ? true : undefined };
+        const name = DECORATIONS[hit.id]?.name ?? hit.id;
+        const label = flag === "blocksPath" ? "Bloquear caminho" : "Alto terreno";
+        setNote(`${name}: ${label} ${turningOn ? "ligado" : "desligado"}.`);
+        return { ...d, decorations: d.decorations.map((p) => (p === hit ? next : p)) };
+      });
+    },
+    [selectedPlacedDecoration, setNote],
+  );
+
   const removeSelectedDecoration = useCallback(() => {
     const selected = selectedPlacedDecoration;
     if (!selected) {
@@ -2934,8 +2978,8 @@ function MapEditorScreen({
   };
 
   const resize = (cols: number, rows: number) => {
-    cols = Math.max(3, Math.min(40, cols));
-    rows = Math.max(3, Math.min(40, rows));
+    cols = Math.max(MIN_GRID, Math.min(MAX_GRID, cols));
+    rows = Math.max(MIN_GRID, Math.min(MAX_GRID, rows));
     setDraft((d) => {
       const base = baseForDraft(d);
       const tiles: TerrainId[] = [];
@@ -3459,6 +3503,21 @@ function MapEditorScreen({
             />
             <span className="text-muted">Terreno automático</span>
           </label>
+          <label className="flex items-center gap-2" title="O grupo só vê um raio em volta de si; o que já passou fica lembrado mas escuro, e inimigos sem linha de visão não aparecem nem podem ser alvo">
+            <input
+              type="checkbox"
+              checked={!!draft.fog}
+              onChange={(e) => {
+                setDraft((d) => ({ ...d, fog: e.target.checked }));
+                setNote(
+                  e.target.checked
+                    ? "Névoa ligada — inimigos fora da linha de visão não aparecem nem podem ser alvo."
+                    : "Névoa desligada — o mapa inteiro fica visível, como nas missões antigas.",
+                );
+              }}
+            />
+            <span className="text-muted">Névoa de guerra</span>
+          </label>
         </div>
 
         <div className="flex items-center gap-2 text-sm">
@@ -3466,6 +3525,8 @@ function MapEditorScreen({
             <span className="text-muted text-xs uppercase tracking-wide">Col</span>
             <input
               type="number"
+              min={MIN_GRID}
+              max={MAX_GRID}
               className="w-16 bg-bg border border-border rounded-md px-2 py-1"
               value={draft.cols}
               onChange={(e) => resize(Number(e.target.value) || draft.cols, draft.rows)}
@@ -3475,6 +3536,8 @@ function MapEditorScreen({
             <span className="text-muted text-xs uppercase tracking-wide">Lin</span>
             <input
               type="number"
+              min={MIN_GRID}
+              max={MAX_GRID}
               className="w-16 bg-bg border border-border rounded-md px-2 py-1"
               value={draft.rows}
               onChange={(e) => resize(draft.cols, Number(e.target.value) || draft.rows)}
@@ -3645,6 +3708,45 @@ function MapEditorScreen({
                   );
                 })}
               </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 border border-border rounded-md p-2 bg-bg/40">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="uppercase tracking-wide text-muted">Regras da decoração</span>
+                <span className="text-muted">
+                  {selectedPlacement
+                    ? `${DECORATIONS[selectedPlacement.id]?.name ?? selectedPlacement.id} em ${selectedPlacement.x},${selectedPlacement.y}`
+                    : "clique numa decoração no mapa"}
+                </span>
+              </div>
+              <label
+                className={`flex items-center gap-2 text-sm ${selectedPlacement ? "" : "opacity-50"}`}
+                title="Ligado, o hexágono deixa de ser navegável. Nesta engine sólido é sólido: também passa a barrar flecha e névoa."
+              >
+                <input
+                  type="checkbox"
+                  disabled={!selectedPlacement}
+                  checked={!!selectedPlacement?.blocksPath}
+                  onChange={() => toggleDecorationRule("blocksPath")}
+                />
+                <span className="text-muted">Bloquear caminho</span>
+              </label>
+              <label
+                className={`flex items-center gap-2 text-sm ${selectedPlacement ? "" : "opacity-50"}`}
+                title="Ligado, quem estiver no hexágono recebe os bônus de terreno alto: +2 de dano, +1 de alcance para arco. Com Bloquear caminho também ligado vira rochedo — ninguém sobe, e flecha de quem está embaixo não passa por cima."
+              >
+                <input
+                  type="checkbox"
+                  disabled={!selectedPlacement}
+                  checked={!!selectedPlacement?.yieldsHighGround}
+                  onChange={() => toggleDecorationRule("yieldsHighGround")}
+                />
+                <span className="text-muted">Alto terreno</span>
+              </label>
+              <p className="text-xs text-muted">
+                Os dois só acrescentam: desligados, o hexágono mantém a regra do terreno que está embaixo. Uma barricada
+                segue intransponível com "Bloquear caminho" desligado, porque é a definição dela que a torna sólida.
+              </p>
             </div>
           </div>
         )}

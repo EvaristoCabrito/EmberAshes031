@@ -1,4 +1,4 @@
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, isBossClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, HIGH_GROUND_LIFT, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, isBossClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, SIGHT_RADIUS, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
 import type { SpellTier } from "./data";
 import { canCounter, makeForecast, mulberry32, powerOf, protOf, rollDamage, rollDamageCustom } from "./combat";
 import {
@@ -13,6 +13,7 @@ import {
   footprintFrontRow,
   hexNeighbors,
   hexDist,
+  hexLine,
   inBounds,
   inWeaponRange,
   key,
@@ -28,11 +29,14 @@ import {
   unitSize,
   type ReachCell,
 } from "./pathfinding";
+import { packExplored, relight, sightReaches, unpackExplored } from "./fog";
+import { buildDecorOverlay, hexDef, type DecorOverlay } from "./hexprops";
 import { sfxPlay } from "./audio";
 import type {
   Bag,
   BattleSnapshot,
   BattleUnitSnap,
+  TerrainDef,
   ClassId,
   DecorationPlacement,
   Forecast,
@@ -77,6 +81,10 @@ interface Particle {
 
 const PARTICLE_CAP = 32;
 const ZOOM_RADII = [22, 34, 50, 72];
+
+/** Seconds one step of a walk animation takes. Shared by the position and the
+ * high-ground lift so a unit's feet and its elevation move on the same clock. */
+const MOVE_STEP_DUR = 0.12;
 
 /** Level-up flourish: a small pixel-space burst anchored to a unit's hex (recomputed every
  * frame from its live position, so it still tracks correctly if the unit somehow moves mid-
@@ -692,6 +700,69 @@ export class BattleEngine {
    * happened since — see undoMove. Cleared with the turn. */
   private turnStart: Point | null = null;
   private moveSpoiled = false;
+  /**
+   * Cached `occupancy` map plus the layout it describes, packed one int per unit.
+   *
+   * `occupancy` walks every living unit and expands its footprint into a fresh Map
+   * keyed by string, and it was rebuilt at each of twenty-odd call sites — eight of
+   * them inside one `spellAimValid`, which `render` runs every frame while a spell
+   * is aimed. At a hundred-odd multi-hex units that dominates the frame.
+   *
+   * The guard compares the packed layout rather than counting a version: positions
+   * and aliveness are mutated in place all over this file, so a counter would need
+   * a bump at every one of those sites and one missed bump hands out a stale map —
+   * a unit that reads as passable when it is not. Comparing is O(units) of integer
+   * work against O(units x footprint) of Map building, so it still pays, and it
+   * cannot go stale. Footprint shape is fixed at spawn, so it needs no stamp; a
+   * summon changes the array length, which the compare catches.
+   */
+  /**
+   * The two per-placement decoration switches, folded to one byte per cell.
+   *
+   * Rebuilt whenever the decoration list changes rather than consulted per query: a
+   * rule asking about a hex must not walk every prop on the board to find out, and
+   * `terrainDistanceField` asks about every cell six times over. Read through
+   * `hexAt`, never directly.
+   */
+  private decorOverlay: DecorOverlay = new Uint8Array(0);
+  private occCache: Map<string, Unit> | null = null;
+  private occStamp: number[] = [];
+  /**
+   * Whole-board distance fields, one per player, shared by every enemy that runs its
+   * AI against the same board (see playerDistanceFields).
+   *
+   * `terrainDistanceField` is a Dijkstra over every cell, and runAiFor built one per
+   * player for each enemy in turn. Players cannot move during the enemy phase, so
+   * all of those were the same field computed again and again: at 160x160 with a
+   * hundred enemies and six players that is six hundred whole-board searches per
+   * round, about 45 seconds of them. Six suffice.
+   *
+   * `terrainVersion` is bumped by the two things that reshape the board mid-battle —
+   * a smashed barricade and an opened chest — since either changes path costs.
+   */
+  private fieldCache = new Map<string, Map<string, number>>();
+  private fieldStamp = "";
+  private terrainVersion = 0;
+  /**
+   * Fog of war, one byte per cell, row-major like `tiles`.
+   *
+   *   0 unseen   — never in sight; drawn as nothing at all
+   *   1 explored — walked past and remembered: terrain draws dim, but whatever
+   *                moves through it does not, because memory is not sight
+   *   2 visible  — in sight of a living party member this instant
+   *
+   * Empty when `mission.fog` is off, and every read goes through `visible`/`explored`
+   * which answer true for everything in that case, so the twenty missions that
+   * shipped before fog behave exactly as they did.
+   *
+   * Recomputed when the party moves rather than per frame — sight only changes when
+   * someone walks, dies or the board does (see refreshVisibility).
+   */
+  private vis: Uint8Array = new Uint8Array(0);
+  private visStamp = "";
+  /** Foes that have already spotted the party, so waking sticks. Ids rather than a
+   * flag on Unit, which keeps it out of the per-unit save validation. */
+  private awake = new Set<string>();
   /** All alive units for this round, sorted by CLASSES[classId].init (lower first, ties favor the player). */
   private turnOrder: string[] = [];
   /** id of the unit whose turn we've already dispatched — lets the tick loop react only on change. */
@@ -825,6 +896,7 @@ export class BattleEngine {
       }
     }
     this.decorations.push(...barricadeDecor(this.tiles, this.cols, this.rows, this.decorations));
+    this.refreshDecorOverlay();
     this.rng = mulberry32(seed + mission.index * 97);
     this.units = [
       ...mission.playerSpawns.map((s, i) => spawnUnit(s, "player", i, roster)),
@@ -892,10 +964,12 @@ export class BattleEngine {
     const hoverUnit = hoverCell
       ? this.units.find((u) => u.alive && occupies(u, hoverCell.x, hoverCell.y))
       : undefined;
-    const terr = hoverCell ? TERRAIN[tileAt(this.tiles, this.cols, hoverCell.x, hoverCell.y)] : null;
+    const terr = hoverCell ? this.hexAt(hoverCell.x, hoverCell.y) : null;
     const inspected = this.units.find((u) => u.id === this.inspectedId) ?? null;
     const pendingFoe = this.units.find((u) => u.id === this.pendingFoeId) ?? null;
-    const foeForForecast = pendingFoe ?? (inspected && attackableByPlayer(inspected) ? inspected : null);
+    // A foe out of sight gets no damage forecast either — the HUD must not leak what
+    // the board is hiding.
+    const foeForForecast = pendingFoe ?? (this.targetable(inspected ?? undefined) ? inspected : null);
     let forecast: Forecast | null = null;
     if (selected && foeForForecast && selected.side === "player") {
       const from = this.attackFrom.get(foeForForecast.id);
@@ -915,7 +989,7 @@ export class BattleEngine {
       !!selected &&
       !selected.acted &&
       (this.attackFrom.size > 0 ||
-        this.units.some((u) => u.alive && u.side !== selected.side && canHitFrom(selected, selected, u, this.tiles, this.cols)));
+        this.units.some((u) => u.alive && u.side !== selected.side && canHitFrom(selected, selected, u, this.tiles, this.cols, this.decorOverlay)));
     const canLockpick = !!selected && !selected.acted && selected.bag.lockpick > 0 && !!this.adjacentLock(selected);
     const offHandKind: "weapon" | "shield" | null =
       selected && !selected.acted && selected.offHandId ? (EQUIPMENT[selected.offHandId]?.kind ?? null) : null;
@@ -1152,6 +1226,8 @@ export class BattleEngine {
         : null,
       turnRestrained: this.turnRestrained,
       turnBegan: !!this.activeTurnUnit() && this.activeUnitId === this.activeTurnUnit()?.id,
+      explored: this.snapshotExplored(),
+      awake: this.fogged && this.awake.size > 0 ? [...this.awake] : undefined,
     };
   }
 
@@ -1160,9 +1236,12 @@ export class BattleEngine {
     if (snap.missionId !== this.mission.id) return;
     if (snap.tiles.length === this.tiles.length) {
       for (let i = 0; i < snap.tiles.length; i++) this.tiles[i] = snap.tiles[i]!;
+      this.terrainVersion++;
     }
     this.decorations.splice(0, this.decorations.length, ...snap.decorations.map((d) => ({ ...d })));
+    this.refreshDecorOverlay();
     this.units = snap.units.map(unitFromSnap);
+    this.invalidateOcc();
     this.turn = snap.turn;
     this.phase = snap.phase;
     this.turnOrder = [...snap.turnOrder];
@@ -1205,6 +1284,10 @@ export class BattleEngine {
     this.turnStart = null;
     this.moveSpoiled = true;
     this.skipStartOfTurn = snap.turnBegan;
+    // After units and tiles are in place, so the length check has the right board and
+    // the first refreshVisibility relights around wherever the party actually landed.
+    this.restoreExplored(snap.explored);
+    this.awake = new Set(snap.awake ?? []);
     this.activeUnitId = null;
     const first = this.units.find((u) => u.side === "player" && u.alive);
     if (first) {
@@ -1665,8 +1748,8 @@ export class BattleEngine {
    * the defender's RES with it, making armoured targets hardest for the spells meant to
    * break them. */
   private spellDamage(att: Unit, foe: Unit, mul: number, roll: number): number {
-    const attTile = TERRAIN[tileAt(this.tiles, this.cols, att.x, att.y)];
-    const defTile = TERRAIN[tileAt(this.tiles, this.cols, foe.x, foe.y)];
+    const attTile = this.hexAt(att.x, att.y);
+    const defTile = this.hexAt(foe.x, foe.y);
     const prot = protOf(att, foe);
     const spell = Math.floor(powerOf(att) * mul) + roll + attTile.atk - prot - (defTile.cover ?? 0);
     const plain = powerOf(att) + weaponRoll(att.weaponId, att.weaponEnh, this.rng) + attTile.atk - prot - defTile.def;
@@ -1695,7 +1778,7 @@ export class BattleEngine {
       for (const id of a.ids) {
         const foe = this.units.find((u) => u.id === id && u.alive);
         if (!foe) continue;
-        const defTile = TERRAIN[tileAt(this.tiles, this.cols, foe.x, foe.y)];
+        const defTile = this.hexAt(foe.x, foe.y);
         if (defTile.id === "barricade") {
           this.emitParticle({
             x: foe.drawX,
@@ -2050,7 +2133,7 @@ export class BattleEngine {
     this.selectedId = u.id;
     this.orig = { x: u.x, y: u.y };
     this.origMoveBudgetUsed = u.moveBudgetUsed;
-    this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
+    this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
     this.mode = "selected";
   }
 
@@ -2096,11 +2179,17 @@ export class BattleEngine {
         const i = c.y * this.cols + c.x;
         if (this.tiles[i] !== "barricade") continue;
         this.tiles[i] = fill;
+        // Path costs just changed, so the cached distance fields no longer describe
+        // this board (see playerDistanceFields).
+        this.terrainVersion++;
         // The prop goes with the terrain — leaving it would draw a barricade over ground
         // that is now walkable.
         for (let d = this.decorations.length - 1; d >= 0; d--) {
           const dec = this.decorations[d];
-          if ((dec.id === "barricade" || dec.id === "barricade-2") && dec.x === c.x && dec.y === c.y) this.decorations.splice(d, 1);
+          if ((dec.id === "barricade" || dec.id === "barricade-2") && dec.x === c.x && dec.y === c.y) {
+            this.decorations.splice(d, 1);
+            this.refreshDecorOverlay();
+          }
         }
         n += 1;
         this.emitParticle({
@@ -2125,9 +2214,9 @@ export class BattleEngine {
   }
 
   private nudgeOffHazard(unit: Unit): void {
-    const here = TERRAIN[tileAt(this.tiles, this.cols, unit.x, unit.y)];
+    const here = this.hexAt(unit.x, unit.y);
     if (here.passable) return;
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const seen = new Set<string>([key(unit.x, unit.y)]);
     const q: Point[] = [{ x: unit.x, y: unit.y }];
     while (q.length) {
@@ -2137,7 +2226,7 @@ export class BattleEngine {
         const k = key(n.x, n.y);
         if (seen.has(k)) continue;
         seen.add(k);
-        const terr = TERRAIN[tileAt(this.tiles, this.cols, n.x, n.y)];
+        const terr = this.hexAt(n.x, n.y);
         const who = occ.get(k);
         if (terr.passable && (!who || who.id === unit.id)) {
           unit.x = n.x;
@@ -2213,7 +2302,7 @@ export class BattleEngine {
   }
 
   private applyTileHazard(unit: Unit, cell: Point): void {
-    const terr = TERRAIN[tileAt(this.tiles, this.cols, cell.x, cell.y)];
+    const terr = this.hexAt(cell.x, cell.y);
     if (!terr.hazardDice || !unit.alive) return;
     const faces = terr.hazardFaces ?? 8;
     let dmg = 0;
@@ -2623,8 +2712,8 @@ export class BattleEngine {
     this.inspectedId = null;
     this.orig = { x: unit.x, y: unit.y };
     this.origMoveBudgetUsed = unit.moveBudgetUsed;
-    this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units);
-    this.attackFrom = unit.acted ? new Map() : attackableEnemies(unit, this.reach, this.units, this.tiles, this.cols);
+    this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
+    this.attackFrom = unit.acted ? new Map() : this.visibleAttackTargets(unit);
     this.threat = [];
     this.mode = "selected";
     this.tip = null;
@@ -2634,9 +2723,9 @@ export class BattleEngine {
 
   private inspect(unit: Unit): void {
     this.inspectedId = unit.id;
-    this.threat = computeThreat(unit, this.tiles, this.cols, this.rows, this.units);
+    this.threat = computeThreat(unit, this.tiles, this.cols, this.rows, this.units, this.decorOverlay);
     const max = effectiveMaxRange(unit, tileAt(this.tiles, this.cols, unit.x, unit.y));
-    const tile = TERRAIN[tileAt(this.tiles, this.cols, unit.x, unit.y)];
+    const tile = this.hexAt(unit.x, unit.y);
     this.tip = `${unit.name} · HP ${unit.hp}/${unit.maxHp} · Alc ${unit.minRange === max ? max : `${unit.minRange}–${max}`}${
       tile.height ? " · alto +2" : ""
     }${tile.id === "barricade" ? " · barricada bloqueia projéteis" : ""}${
@@ -2690,8 +2779,8 @@ export class BattleEngine {
     this.threat = [];
     this.selectedId = u.id;
     this.mode = "selected";
-    this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
-    this.attackFrom = attackableEnemies(u, this.reach, this.units, this.tiles, this.cols);
+    this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
+    this.attackFrom = this.visibleAttackTargets(u);
     this.ensureVisible(u.x, u.y);
     this.centerOn(u.x, u.y);
     this.tip = `${u.name} voltou ao ponto de partida — ${u.mov} de movimento de volta.`;
@@ -3193,7 +3282,7 @@ export class BattleEngine {
 
   private longMax(u: Unit): number {
     const ranged = u.weaponId ? !!WEAPONS[u.weaponId]?.ranged : false;
-    const extra = ranged && TERRAIN[tileAt(this.tiles, this.cols, u.x, u.y)].height ? 1 : 0;
+    const extra = ranged && this.hexAt(u.x, u.y).height ? 1 : 0;
     return u.maxRange * LONG_SHOT.rangeMul + LONG_SHOT.rangeBonus + extra;
   }
 
@@ -3257,69 +3346,278 @@ export class BattleEngine {
     return cap === u.mov ? u : { ...u, mov: cap };
   }
 
+  /** Whether this mission hides anything at all. */
+  get fogged(): boolean {
+    return this.mission.fog === true;
+  }
+
+  /** In sight of the party right now. Always true on a mission without fog. */
+  visible(x: number, y: number): boolean {
+    if (!this.fogged) return true;
+    return this.vis[y * this.cols + x] === 2;
+  }
+
+  /** Seen at least once — visible now, or remembered. True everywhere without fog. */
+  explored(x: number, y: number): boolean {
+    if (!this.fogged) return true;
+    return (this.vis[y * this.cols + x] ?? 0) > 0;
+  }
+
+  /** Whether a unit is hidden from the player: any cell of its footprint in sight
+   * reveals the whole of it, so a big body never half-appears. */
+  private unitHidden(u: Unit): boolean {
+    if (!this.fogged || u.side === "player") return false;
+    return !footprint(u).some((p) => this.visible(p.x, p.y));
+  }
+
+  /**
+   * Whether the player may swing at, shoot or cast on this unit — `attackableByPlayer`
+   * plus sight. Every enemy-targeting branch of spellAimValid and the attack picker
+   * funnel through here, which is the whole of "you cannot aim at what you cannot
+   * see": a foe standing in the dark is not a legal target, so no spell arms on it
+   * and no attack offers itself.
+   *
+   * Fog does not go the other way. `occ` stays sight-blind, so an unseen body still
+   * blocks a step and still stops an arrow — walking through one because the party
+   * had not spotted it yet would be a worse lie than not being able to shoot it.
+   */
+  private targetable(u: Unit | undefined): u is Unit {
+    if (!u || !attackableByPlayer(u)) return false;
+    return !this.unitHidden(u);
+  }
+
+  /**
+   * `attackableEnemies` filtered down to foes the party can actually see.
+   *
+   * The underlying pass is sight-blind on purpose — it is shared with the enemy AI,
+   * which has no business consulting the player's fog. Dropping hidden foes here
+   * keeps the attack offers, and the highlights drawn from them, honest without
+   * teaching the pathfinder about fog.
+   */
+  private visibleAttackTargets(unit: Unit): Map<string, Point> {
+    const reach = this.reach;
+    const all = attackableEnemies(unit, reach, this.units, this.tiles, this.cols, this.decorOverlay);
+    if (!this.fogged) return all;
+    for (const id of [...all.keys()]) {
+      const foe = this.units.find((u) => u.id === id);
+      if (!foe || this.unitHidden(foe)) all.delete(id);
+    }
+    return all;
+  }
+
+  /**
+   * Recompute sight if the party has moved since the last pass.
+   *
+   * Cells already marked explored stay explored — fog lifts and never falls back to
+   * unseen. The stamp is the party's own layout, so this is a cheap no-op on the
+   * frames and turns where nobody walked.
+   *
+   * Cost is O(party x radius^2), independent of how big the board is: a 160x160
+   * dungeon costs exactly what a 20x16 skirmish does.
+   */
+  private refreshVisibility(): void {
+    if (!this.fogged) return;
+    const cells = this.cols * this.rows;
+    if (this.vis.length !== cells) {
+      this.vis = new Uint8Array(cells);
+      this.visStamp = "";
+    }
+    let stamp = `${this.terrainVersion}`;
+    for (const u of this.units) {
+      if (u.side !== "player" || !u.alive) continue;
+      stamp += `|${u.id}:${u.x},${u.y}`;
+    }
+    if (stamp === this.visStamp) return;
+    this.visStamp = stamp;
+
+    // Every cell a living party member stands on is an eye, so a four-hex body sees
+    // around its whole bulk rather than from one nominal corner of it.
+    const eyes: Point[] = [];
+    for (const u of this.units) {
+      if (u.side !== "player" || !u.alive) continue;
+      eyes.push(...footprint(u));
+    }
+    relight(this.vis, eyes, SIGHT_RADIUS, this.tiles, this.cols, this.rows, this.decorOverlay);
+  }
+
+  /**
+   * Whether this foe is allowed to act, waking it if it can see the party.
+   *
+   * Always true without fog. Under fog a foe starts asleep and wakes the moment any
+   * living party member is inside its own sight — its own, not the party's `vis`,
+   * since the two see different things and reading the player's fog here would let a
+   * foe act on knowledge it does not have.
+   *
+   * Waking sticks, and is remembered in the save: a foe that loses sight again keeps
+   * hunting, because one that forgot the instant the party stepped behind a pillar
+   * could be shaken off by walking one hex sideways.
+   *
+   * Known gap: a shot from beyond its sight radius does not wake it, so a long enough
+   * bow can pick off a sleeping foe. Waking on damage needs a hook in the damage path
+   * and is worth doing on its own.
+   */
+  private wakeIfSeesParty(foe: Unit): boolean {
+    if (!this.fogged) return true;
+    if (this.awake.has(foe.id)) return true;
+    for (const p of this.units) {
+      if (p.side !== "player" || !p.alive) continue;
+      if (hexDist(foe, p) > SIGHT_RADIUS) continue;
+      if (!sightReaches(foe, p, this.tiles, this.cols, this.decorOverlay)) continue;
+      this.awake.add(foe.id);
+      return true;
+    }
+    return false;
+  }
+
+  /** Explored cells for the save, or absent on a mission without fog. */
+  private snapshotExplored(): string | undefined {
+    if (!this.fogged || this.vis.length === 0) return undefined;
+    return packExplored(this.vis);
+  }
+
+  /** Restore explored cells, falling back to nothing seen when the save carries none
+   * or carries a bitset that does not fit this board — see unpackExplored. */
+  private restoreExplored(encoded: string | undefined): void {
+    const cells = this.cols * this.rows;
+    this.visStamp = "";
+    this.vis = (this.fogged && encoded ? unpackExplored(encoded, cells) : null) ?? new Uint8Array(cells);
+  }
+
+  /**
+   * The consolidated properties of one hex: painted terrain with the decoration layer
+   * folded in. Every rule in this class goes through here instead of reading `TERRAIN`
+   * off `tiles` directly, which is what lets a placement's switches change movement,
+   * sight and the high-ground bonus without the board itself being rewritten.
+   */
+  private hexAt(x: number, y: number): TerrainDef {
+    return hexDef(this.tiles, this.cols, x, y, this.decorOverlay);
+  }
+
+  /** Refold the decoration switches. Call after anything adds or removes a prop. */
+  private refreshDecorOverlay(): void {
+    this.decorOverlay = buildDecorOverlay(this.decorations, this.cols, this.rows, placedFootprint);
+  }
+
+  /** Who stands where, rebuilt only when the layout actually moved. See `occCache`. */
+  private occ(): Map<string, Unit> {
+    const n = this.units.length;
+    let same = this.occCache !== null && this.occStamp.length === n;
+    for (let i = 0; i < n; i++) {
+      const u = this.units[i]!;
+      // x and y are bounded by MAX_GRID, so this packs without overlap.
+      const packed = (u.x * 1024 + u.y) * 2 + (u.alive ? 1 : 0);
+      if (this.occStamp[i] !== packed) {
+        same = false;
+        this.occStamp[i] = packed;
+      }
+    }
+    if (same) return this.occCache!;
+    this.occStamp.length = n;
+    const units = this.units;
+    this.occCache = occupancy(units);
+    return this.occCache;
+  }
+
+  /**
+   * Drop the cache when `this.units` is replaced wholesale rather than mutated.
+   * The packed compare only sees positions, so a restore that happens to land every
+   * unit on the cell it already held would otherwise keep a map pointing at the
+   * previous Unit objects — same coordinates, wrong identities.
+   */
+  private invalidateOcc(): void {
+    this.occCache = null;
+    this.occStamp.length = 0;
+  }
+
+  /**
+   * One whole-board distance field per player, cached while the board and the party
+   * stand still. See `fieldCache` for why this matters.
+   *
+   * Keyed on terrain version plus every player's position, so the first enemy of a
+   * phase pays for the fields and the rest read them. A player moving (their own
+   * phase, or a Trip/Stampede shove during the enemy's) or terrain changing retires
+   * the whole set rather than trying to patch it.
+   */
+  private playerDistanceFields(players: Unit[]): { p: Unit; field: Map<string, number> }[] {
+    let stamp = `${this.terrainVersion}`;
+    for (const p of players) stamp += `|${p.id}:${p.x},${p.y}`;
+    if (stamp !== this.fieldStamp) {
+      this.fieldCache.clear();
+      this.fieldStamp = stamp;
+    }
+    return players.map((p) => {
+      let field = this.fieldCache.get(p.id);
+      if (!field) {
+        field = terrainDistanceField(p, this.tiles, this.cols, this.rows, this.decorOverlay);
+        this.fieldCache.set(p.id, field);
+      }
+      return { p, field };
+    });
+  }
+
   private spellAimValid(caster: Unit, cell: Point): boolean {
     if (!this.spellKind) return false;
     if (this.spellKind === "fireball") {
       if (manhattan(caster, cell) > FIREBALL.range) return false;
-      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt");
+      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt", this.decorOverlay);
     }
     if (this.spellKind === "causticVenom") {
       if (manhattan(caster, cell) > CAUSTIC_VENOM.range) return false;
-      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt");
+      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt", this.decorOverlay);
     }
     if (this.spellKind === "longShot") {
       const d = manhattan(caster, cell);
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || d < caster.minRange || d > this.longMax(caster)) return false;
-      return clearShot(caster, cell, this.tiles, this.cols, "arrow");
+      const here = this.occ().get(key(cell.x, cell.y));
+      if (!this.targetable(here) || d < caster.minRange || d > this.longMax(caster)) return false;
+      return clearShot(caster, cell, this.tiles, this.cols, "arrow", this.decorOverlay);
     }
     if (this.spellKind === "piercing") return this.piercingRay(caster, cell) !== null;
     if (this.spellKind === "piercingThrust") return this.piercingThrustRay(caster, cell) !== null;
     if (this.spellKind === "lightning") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > LIGHTNING.range) return false;
+      const here = this.occ().get(key(cell.x, cell.y));
+      if (!this.targetable(here) || manhattan(caster, cell) > LIGHTNING.range) return false;
       return true;
     }
     if (this.spellKind === "lightningTier3") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > LIGHTNING_T3.range) return false;
+      const here = this.occ().get(key(cell.x, cell.y));
+      if (!this.targetable(here) || manhattan(caster, cell) > LIGHTNING_T3.range) return false;
       return true;
     }
     if (this.spellKind === "shock") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > SHOCK.range) return false;
+      const here = this.occ().get(key(cell.x, cell.y));
+      if (!this.targetable(here) || manhattan(caster, cell) > SHOCK.range) return false;
       return true;
     }
     if (this.spellKind === "sweep") {
       return manhattan(caster, cell) <= SWEEP.radius;
     }
     if (this.spellKind === "magicMissile") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || manhattan(caster, cell) > MAGIC_MISSILE.range) return false;
-      return clearShot(caster, cell, this.tiles, this.cols, "bolt");
+      const here = this.occ().get(key(cell.x, cell.y));
+      if (!this.targetable(here) || manhattan(caster, cell) > MAGIC_MISSILE.range) return false;
+      return clearShot(caster, cell, this.tiles, this.cols, "bolt", this.decorOverlay);
     }
     if (this.spellKind === "summonFamiliar") {
       if (manhattan(caster, cell) > SUMMON_FAMILIAR.range) return false;
       if (!inBounds(cell.x, cell.y, this.cols, this.rows)) return false;
-      if (!TERRAIN[tileAt(this.tiles, this.cols, cell.x, cell.y)].passable) return false;
-      return !occupancy(this.units).get(key(cell.x, cell.y));
+      if (!this.hexAt(cell.x, cell.y).passable) return false;
+      return !this.occ().get(key(cell.x, cell.y));
     }
     if (this.spellKind === "webOfDreams") {
       if (manhattan(caster, cell) > WEB_OF_DREAMS.range) return false;
-      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt");
+      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt", this.decorOverlay);
     }
     if (this.spellKind === "doubleStrike" || this.spellKind === "trip") {
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
-      return !!here && here.alive && here.side !== caster.side && canHitFrom(caster, caster, here, this.tiles, this.cols);
+      const here = this.occ().get(key(cell.x, cell.y));
+      return !!here && here.alive && here.side !== caster.side && canHitFrom(caster, caster, here, this.tiles, this.cols, this.decorOverlay);
     }
     if (this.spellKind === "cleave" || this.spellKind === "shoulderSmash") {
       return hexNeighbors(caster.x, caster.y).some((p) => p.x === cell.x && p.y === cell.y);
     }
     if (this.spellKind === "multiShot") {
       const d = manhattan(caster, cell);
-      const here = occupancy(this.units).get(key(cell.x, cell.y));
-      if (!here || !attackableByPlayer(here) || d < caster.minRange || d > caster.maxRange + MULTI_SHOT.rangeBonus) return false;
-      return clearShot(caster, cell, this.tiles, this.cols, "arrow");
+      const here = this.occ().get(key(cell.x, cell.y));
+      if (!this.targetable(here) || d < caster.minRange || d > caster.maxRange + MULTI_SHOT.rangeBonus) return false;
+      return clearShot(caster, cell, this.tiles, this.cols, "arrow", this.decorOverlay);
     }
     if (this.spellKind === "divineWrath") return this.wrathRay(caster, cell, DIVINE_WRATH.range) !== null;
     if (this.spellKind === "stampede") return this.wrathRay(caster, cell, STAMPEDE.range) !== null;
@@ -3340,10 +3638,10 @@ export class BattleEngine {
   private piercingRay(from: Point, through: Point): Point[] | null {
     const raw = piercingLine(from, through, this.cols, this.rows);
     if (!raw) return null;
-    const fromHigh = !!TERRAIN[tileAt(this.tiles, this.cols, from.x, from.y)].height;
+    const fromHigh = !!this.hexAt(from.x, from.y).height;
     const out: Point[] = [];
     for (const p of raw) {
-      const t = TERRAIN[tileAt(this.tiles, this.cols, p.x, p.y)];
+      const t = this.hexAt(p.x, p.y);
       if (t.id === "barricade" || t.blocksShot) break;
       if (t.height && !fromHigh) break;
       out.push(p);
@@ -3378,7 +3676,7 @@ export class BattleEngine {
       }
     }
     if (!dest) return;
-    if (!TERRAIN[tileAt(this.tiles, this.cols, dest.x, dest.y)].passable) return;
+    if (!this.hexAt(dest.x, dest.y).passable) return;
     if (this.units.some((u) => u.alive && occupies(u, dest.x, dest.y))) return;
     foe.x = dest.x;
     foe.y = dest.y;
@@ -3402,14 +3700,14 @@ export class BattleEngine {
     if (!this.isHeal(this.spellKind)) return false;
     const range = CURES[this.spellKind].range;
     if (manhattan(caster, cell) > range) return false;
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const who = occ.get(key(cell.x, cell.y));
     return !!who && who.side === "player" && who.alive && who.hp < who.maxHp;
   }
 
   private validCureDiseaseTarget(caster: Unit, cell: Point): boolean {
     if (manhattan(caster, cell) > CURE_DISEASE.range) return false;
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const who = occ.get(key(cell.x, cell.y));
     return !!who && who.side === "player" && who.alive && (who.diseased || who.poisoned);
   }
@@ -3430,7 +3728,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const target = occ.get(key(cell.x, cell.y));
     if (!target) return;
     this.spendTier(unit, kind);
@@ -3447,7 +3745,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const target = occ.get(key(cell.x, cell.y));
     if (!target) return;
     this.spendTier(unit, "cureDisease");
@@ -3488,7 +3786,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "longShot");
@@ -3557,7 +3855,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "lightning");
@@ -3586,7 +3884,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "lightningTier3");
@@ -3617,7 +3915,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
 
@@ -3664,7 +3962,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
 
@@ -3705,7 +4003,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "doubleStrike");
@@ -3727,7 +4025,7 @@ export class BattleEngine {
       sfxPlay.ui();
       return;
     }
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const foe = occ.get(key(cell.x, cell.y));
     if (!foe) return;
     this.spendTier(unit, "trip");
@@ -4317,11 +4615,15 @@ export class BattleEngine {
       this.tiles[i] === "chest" ||
       this.decorations.some((dec) => dec.id === "locked-chest" && dec.x === target.x && dec.y === target.y);
     this.tiles[i] = this.visualFloorAt(target.x, target.y);
+    this.terrainVersion++;
     // decorations is readonly (the renderer holds the same array), so drop the chest's
     // decoration in place rather than rebinding the field.
     for (let d = this.decorations.length - 1; d >= 0; d--) {
       const dec = this.decorations[d];
-      if (dec.id === "locked-chest" && dec.x === target.x && dec.y === target.y) this.decorations.splice(d, 1);
+      if (dec.id === "locked-chest" && dec.x === target.x && dec.y === target.y) {
+        this.decorations.splice(d, 1);
+        this.refreshDecorOverlay();
+      }
     }
     u.bag.lockpick -= 1;
     u.x = Math.round(u.drawX);
@@ -4466,8 +4768,8 @@ export class BattleEngine {
       this.origMoveBudgetUsed = u.moveBudgetUsed;
       this.turnStart = { x: u.x, y: u.y };
       this.moveSpoiled = resumed;
-      this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
-      this.attackFrom = u.acted ? new Map() : attackableEnemies(u, this.reach, this.units, this.tiles, this.cols);
+      this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
+      this.attackFrom = u.acted ? new Map() : this.visibleAttackTargets(u);
       this.threat = [];
       this.mode = "selected";
       this.tip = null;
@@ -4543,8 +4845,17 @@ export class BattleEngine {
   }
 
   private runAiFor(next: Unit): void {
+    // Under fog, a foe that has not seen the party yet holds its ground. Without this
+    // the whole point of fog is lost from the other side: the party creeps through a
+    // dark corridor while every enemy on the level walks straight at them, having been
+    // told where they are by a turn loop rather than by seeing them.
+    if (!this.wakeIfSeesParty(next)) {
+      next.moved = true;
+      next.acted = true;
+      return;
+    }
     this.smashBarricades(next);
-    const reach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units);
+    const reach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
     // Every move this function queues has to be reconstructed off this unpruned pass, not
     // `reach` above — same reasoning as commitMove's walkReach: `reach` deletes any cell along
     // the way that isn't itself a legal place to stop (an ally standing there, or — the one
@@ -4555,7 +4866,7 @@ export class BattleEngine {
     // (Golem, Birolho, Horror, Asherah, Troll) has one on almost every route, which is why
     // only they ever looked "stuck" — the AI had already picked a real, reachable destination,
     // it just never got a real path to it.
-    const walkReach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units, false);
+    const walkReach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units, false, this.decorOverlay);
     const players = this.units.filter((u) => u.side === "player" && u.alive);
 
     // Cultist ("Feiticeiro") — Relâmpago outranks Choque outranks Magic Missile. Choque
@@ -4598,7 +4909,7 @@ export class BattleEngine {
         for (const cell of reach.values()) {
           for (const foe of players) {
             if (manhattan(cell, foe) > MAGIC_MISSILE.range) continue;
-            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
+            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt", this.decorOverlay)) continue;
             const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
             if (!bestSpell || score > bestSpell.score) bestSpell = { foe, from: { x: cell.x, y: cell.y }, score };
           }
@@ -4664,7 +4975,7 @@ export class BattleEngine {
         for (const cell of reach.values()) {
           for (const foe of players) {
             if (manhattan(cell, foe) > CAUSTIC_VENOM.range) continue;
-            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
+            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt", this.decorOverlay)) continue;
             const splash = hexAreaTiles({ x: foe.x, y: foe.y }, CAUSTIC_VENOM.size, this.cols, this.rows);
             let hits = 0;
             let score = 0;
@@ -4719,7 +5030,7 @@ export class BattleEngine {
         for (const cell of reach.values()) {
           for (const foe of players) {
             if (manhattan(cell, foe) > MAGIC_MISSILE.range) continue;
-            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
+            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt", this.decorOverlay)) continue;
             const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
             if (!bestBolt || score > bestBolt.score) bestBolt = { foe, from: { x: cell.x, y: cell.y }, score };
           }
@@ -4773,7 +5084,7 @@ export class BattleEngine {
           if (spellKind === "longShot") {
             const d = manhattan(cell, foe);
             if (d < next.minRange || d > longMax) continue;
-            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "arrow")) continue;
+            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "arrow", this.decorOverlay)) continue;
           } else {
             const line = this.piercingRay({ x: cell.x, y: cell.y }, { x: foe.x, y: foe.y });
             if (!line || !line.some((p) => p.x === foe.x && p.y === foe.y)) continue;
@@ -4817,8 +5128,8 @@ export class BattleEngine {
     let best: { foe: Unit; from: Point; score: number } | null = null;
     for (const cell of reach.values()) {
       for (const foe of players) {
-        if (!canHitFrom(next, cell, foe, this.tiles, this.cols)) continue;
-        const terr = TERRAIN[tileAt(this.tiles, this.cols, cell.x, cell.y)];
+        if (!canHitFrom(next, cell, foe, this.tiles, this.cols, this.decorOverlay)) continue;
+        const terr = this.hexAt(cell.x, cell.y);
         const score = (foe.maxHp - foe.hp) * 3 + terr.def * 2 + (foe.hp <= 8 ? 20 : 0);
         if (!best || score > best.score) best = { foe, from: { x: cell.x, y: cell.y }, score };
       }
@@ -4840,7 +5151,7 @@ export class BattleEngine {
     // obstacle, because every actual step first reads as moving away (see
     // terrainDistanceField). Computed once per player and reused for both picking who to
     // chase and which reachable cell actually closes the gap.
-    const fields = players.map((p) => ({ p, field: terrainDistanceField(p, this.tiles, this.cols, this.rows) }));
+    const fields = this.playerDistanceFields(players);
     let nearest = fields[0]!;
     for (const f of fields) {
       const dCur = f.field.get(key(next.x, next.y)) ?? Infinity;
@@ -4904,7 +5215,7 @@ export class BattleEngine {
   }
 
   private handleCell(cell: Point, via: "click" | "tap" = "click"): void {
-    const occ = occupancy(this.units);
+    const occ = this.occ();
     const here = occ.get(key(cell.x, cell.y));
     const selected = this.units.find((u) => u.id === this.selectedId);
 
@@ -4959,9 +5270,9 @@ export class BattleEngine {
       this.select(here);
       return;
     }
-    if (here && attackableByPlayer(here)) {
+    if (this.targetable(here)) {
       if (selected && !selected.acted && this.mode === "awaitOffHand") {
-        if (canHitFrom(selected, selected, here, this.tiles, this.cols)) {
+        if (canHitFrom(selected, selected, here, this.tiles, this.cols, this.decorOverlay)) {
           this.commitOffHandAction(selected, here, { x: selected.x, y: selected.y });
           return;
         }
@@ -4977,19 +5288,19 @@ export class BattleEngine {
             this.commitMove(selected, from, () => {
               const u = this.units.find((x) => x.id === selected.id);
               const f = this.units.find((x) => x.id === here.id);
-              if (u && f && u.alive && f.alive && canHitFrom(u, u, f, this.tiles, this.cols)) {
+              if (u && f && u.alive && f.alive && canHitFrom(u, u, f, this.tiles, this.cols, this.decorOverlay)) {
                 this.commitAttack(u, f, { x: u.x, y: u.y });
               }
             });
             return;
           }
         }
-        if (canHitFrom(selected, selected, here, this.tiles, this.cols)) {
+        if (canHitFrom(selected, selected, here, this.tiles, this.cols, this.decorOverlay)) {
           this.commitAttack(selected, here, { x: selected.x, y: selected.y });
           return;
         }
         if (shotKind(selected) && inWeaponRange(selected.x, selected.y, here.x, here.y, selected.minRange, effectiveMaxRange(selected, tileAt(this.tiles, this.cols, selected.x, selected.y)))) {
-          this.tip = TERRAIN[tileAt(this.tiles, this.cols, here.x, here.y)].id === "barricade"
+          this.tip = this.hexAt(here.x, here.y).id === "barricade"
             ? "Barricada bloqueia o projétil."
             : "O terreno alto corta a flecha.";
           sfxPlay.ui();
@@ -5069,15 +5380,15 @@ export class BattleEngine {
       // either use a skill (see the u.acted branch above, unchanged) or end the turn.
       this.selectedId = unit.id;
       this.mode = "selected";
-      this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units);
-      this.attackFrom = attackableEnemies(unit, this.reach, this.units, this.tiles, this.cols);
+      this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
+      this.attackFrom = this.visibleAttackTargets(unit);
       after?.();
     };
   }
 
   private commitAttack(unit: Unit, foe: Unit, from: Point): void {
     const at = { x: Math.round(from.x), y: Math.round(from.y) };
-    if (!canHitFrom(unit, at, foe, this.tiles, this.cols)) {
+    if (!canHitFrom(unit, at, foe, this.tiles, this.cols, this.decorOverlay)) {
       this.mode = "awaitAction";
       this.tip = "Fora de alcance.";
       return;
@@ -5095,7 +5406,7 @@ export class BattleEngine {
    * "already in range from here" check as a normal Atacar; no move-then-act chaining. */
   private commitOffHandAction(unit: Unit, foe: Unit, from: Point): void {
     const item = unit.offHandId ? EQUIPMENT[unit.offHandId] : null;
-    if (!item || !canHitFrom(unit, from, foe, this.tiles, this.cols)) {
+    if (!item || !canHitFrom(unit, from, foe, this.tiles, this.cols, this.decorOverlay)) {
       this.mode = "awaitAction";
       this.tip = "Fora de alcance.";
       return;
@@ -5368,6 +5679,10 @@ export class BattleEngine {
       }
       const decorLayer = def?.unitLayer ?? (def?.foreground ? "front" : "ground");
       if (!def || !img || decorLayer !== layer) continue;
+      // Props are part of the ground, so they follow the terrain rule: remembered once
+      // walked past, hidden while never seen. One explored cell shows the whole prop —
+      // a five-hex parapet half-drawn at a fog edge would read as broken art.
+      if (this.fogged && !placedFootprint(p).some((f) => this.explored(p.x + f.dx, p.y + f.dy))) continue;
       let minDx = 0;
       let maxDx = 0;
       let minDy = 0;
@@ -5391,7 +5706,6 @@ export class BattleEngine {
       const n = def.footprint.length;
       const cx = sumCx / n;
       const cy = sumCy / n;
-      if (cx < -tile * 4 || cy < -tile * 4 || cx > cssW + tile * 4 || cy > cssH + tile * 4) continue;
       const one = def.footprint.length === 1;
       const item = p.id === "locked-chest";
       const tree = p.id === "dead-tree";
@@ -5428,6 +5742,17 @@ export class BattleEngine {
       // Taller near-side props rise upward from their ground anchor instead of stretching
       // equally in both directions. That preserves the shallow isometric perspective.
       const dy = (tree ? -tile * 0.55 : wall ? -tile * 0.12 : house ? -tile * 0.28 : item ? tile * 0.08 : 0) - (h - baseH) * 0.42;
+      // Cull on the box actually drawn, which is why this sits after the sizing above and
+      // not up by the centre. Every branch below centres the image on `(cx, cy + dy)`, so
+      // one bounding circle bounds the turned cases as well as the straight one.
+      //
+      // The previous test allowed the centre a flat `tile * 4` of slack, but a prop is only
+      // as cullable as it is wide: a row of five spans `SQRT3 * (4 + 1.7) / 2 ≈ 4.94` tiles
+      // either side of its centre, and a row of four `≈ 4.07`. Both exceed 4, so a bridge
+      // parapet straddling a screen edge was dropped whole while part of it still belonged
+      // on screen. Deriving the reach from `w`/`h` keeps that honest for any footprint.
+      const reach = Math.hypot(w, h) / 2;
+      if (cx + reach < 0 || cx - reach > cssW || cy + dy + reach < 0 || cy + dy - reach > cssH) continue;
       // Facing art if the prop has it, the way isometric games do it: a drawing per facing,
       // mirrored to cover the opposite one. Only when a facing has no drawing do we fall
       // back to turning the bitmap, which tilts rather than faces and is a placeholder.
@@ -5512,14 +5837,42 @@ export class BattleEngine {
     return { cx: cx / n, cy: cy / n };
   }
 
+  /**
+   * How far this unit's sprite rides above its hex, in pixels, for high ground.
+   *
+   * Mirrors unitPixel's interpolation instead of reading the current cell outright:
+   * during a step `u.x`/`u.y` still hold the cell being left, so a unit walking onto a
+   * hill would snap upward as the step ended. Easing it over the same step makes the
+   * climb read as a climb.
+   *
+   * Reads the consolidated properties, so a prop whose `yieldsHighGround` switch is on
+   * lifts a sprite exactly as a painted hill does — one answer for the bonus and for
+   * the picture. Uses the anchor cell, which is the cell the combat bonus reads too.
+   */
+  private unitLift(u: Unit, cell: number): number {
+    const full = cell * HIGH_GROUND_LIFT;
+    const liftAt = (x: number, y: number) => (this.hexAt(x, y).height ? full : 0);
+    if (this.active && this.active.type === "move" && this.active.id === u.id) {
+      const a = this.active;
+      const from = a.path[a.i];
+      const to = a.path[a.i + 1];
+      if (from && to) {
+        const k = easeOut(Math.min(1, a.t / MOVE_STEP_DUR));
+        const A = liftAt(from.x, from.y);
+        const B = liftAt(to.x, to.y);
+        return A + (B - A) * k;
+      }
+    }
+    return liftAt(u.x, u.y);
+  }
+
   private unitPixel(u: Unit): { cx: number; cy: number } {
     if (this.active && this.active.type === "move" && this.active.id === u.id) {
       const a = this.active;
       const from = a.path[a.i];
       const to = a.path[a.i + 1];
       if (from && to) {
-        const dur = 0.12;
-        const k = easeOut(Math.min(1, a.t / dur));
+        const k = easeOut(Math.min(1, a.t / MOVE_STEP_DUR));
         const A = this.footprintCentroid(from.x, from.y, u.size, u.footprintW, u.footprintOffsets);
         const B = this.footprintCentroid(to.x, to.y, u.size, u.footprintW, u.footprintOffsets);
         return { cx: A.cx + (B.cx - A.cx) * k, cy: A.cy + (B.cy - A.cy) * k };
@@ -5722,6 +6075,10 @@ export class BattleEngine {
     if (u.diseased) layer(false);
   }
   render(ctx: CanvasRenderingContext2D, cssW: number, cssH: number, dpr: number): void {
+    // Cheap no-op unless the party moved since the last frame — see refreshVisibility.
+    // Sitting here means anything drawn, and anything the HUD reads off this engine,
+    // is deciding against current sight rather than last turn's.
+    this.refreshVisibility();
     const sqrt3 = Math.sqrt(3);
     const tile = ZOOM_RADII[this.zoom]!;
     const { w: boardW, h: boardH } = this.boardSize(tile);
@@ -5772,6 +6129,9 @@ export class BattleEngine {
       for (let x = 0; x < this.cols; x++) {
         const { cx, cy } = this.hexCenter(x, y);
         if (cx < -tile * 2 || cy < -tile * 2 || cx > cssW + tile * 2 || cy > cssH + tile * 2) continue;
+        // Never seen: draw nothing at all. Cheaper than the clipped path below, which is
+        // why fog makes a big fogged board lighter to draw rather than heavier.
+        if (!this.explored(x, y)) continue;
         const id = tileAt(this.tiles, this.cols, x, y);
         const drawId = id === "chest" ? this.visualFloorAt(x, y) : id;
         const variants = this.art.tiles[drawId];
@@ -5780,6 +6140,9 @@ export class BattleEngine {
         ctx.save();
         this.hexPath(ctx, cx, cy, tile * 1.0);
         ctx.clip();
+        // Remembered but not in sight: the ground the party walked past, dimmed so it
+        // reads as recall rather than as somewhere they can currently see into.
+        if (!this.visible(x, y)) ctx.globalAlpha = 0.38;
         // A turned hex spins about its own centre, inside the clip. Sixty degrees maps a
         // hexagon onto itself, so only the picture moves — the shape stays put and the
         // neighbours still line up.
@@ -5961,7 +6324,7 @@ export class BattleEngine {
       for (const foe of this.units) {
         if (!foe.alive || foe.side === "player") continue;
         if (this.mode === "selected" && this.attackFrom.has(foe.id)) atkTiles.push(...footprint(foe));
-        if ((this.mode === "awaitAttack" || this.mode === "awaitAction") && selected && canHitFrom(selected, selected, foe, this.tiles, this.cols)) {
+        if ((this.mode === "awaitAttack" || this.mode === "awaitAction") && selected && canHitFrom(selected, selected, foe, this.tiles, this.cols, this.decorOverlay)) {
           atkTiles.push(...footprint(foe));
         }
       }
@@ -6037,11 +6400,18 @@ export class BattleEngine {
     const sorted = [...this.units].sort((a, b) => a.drawY - b.drawY || a.drawX - b.drawX);
     for (const u of sorted) {
       if (u.fade <= 0) continue;
+      // Out of sight, off the board. Unlike terrain there is no remembered version of a
+      // body: a unit the party cannot see is simply not drawn, because a ghost left at
+      // the last place it was seen would be read as where it is now.
+      if (this.unitHidden(u)) continue;
       const s = unitSize(u);
       const boss = isBossClass(u.classId);
       const { cx: px, cy: py } = this.unitPixel(u);
       const foot = s >= 4 ? 2.15 : s === 2 ? 1.5 : boss ? 1.12 : 1;
       const { bob, sway, breath } = this.liveMotion(u, cell);
+      // Purely visual: the sprite and the things that hang off it rise, the shadow below
+      // does not, and the sort above already ran on the logical row. See unitLift.
+      const lift = this.unitLift(u, cell);
       ctx.save();
       ctx.globalAlpha = u.fade * (u.moved && u.side === "player" && this.phase === "player" ? 0.55 : 1);
       ctx.fillStyle = "rgba(0,0,0,0.4)";
@@ -6095,7 +6465,7 @@ export class BattleEngine {
       // matching the hex outline radius used elsewhere) instead of the smaller offset tuned
       // for normal-size sprites, so the feet don't float above the tile they stand on.
       const footY = s >= 4 ? tile * 0.9 : cell * 0.42;
-      ctx.translate(px + sway, py + footY + bob);
+      ctx.translate(px + sway, py + footY + bob - lift);
       // Dedicated left/right walk+attack cuts already face the enemy, so flipping
       // them would put the spear/staff on the wrong side. Idle still flips.
       const dirAction = (u.sprite === "malrec" || u.sprite === "aldric" || u.sprite === "defaultLancer" || u.sprite === "lancer" || u.sprite === "sandoval") && (atk != null || moving);
@@ -6161,7 +6531,7 @@ export class BattleEngine {
         const bw = cell * (s >= 4 ? 1.35 : s === 2 ? 0.9 : boss ? 0.68 : 0.62);
         const bh = Math.max(4, cell * 0.07);
         const bx = px - bw / 2;
-        const by = py - h + cell * 0.42 + bob - Math.max(8, cell * 0.12);
+        const by = py - h + cell * 0.42 + bob - lift - Math.max(8, cell * 0.12);
         ctx.fillStyle = "rgba(12,11,10,0.82)";
         ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
         ctx.fillStyle = "#2c2824";

@@ -1,6 +1,50 @@
-import { TIER_KEYS } from "./types";
-import type { Bag, ClassDef, ClassId, DecorationDef, DecorationPlacement, EquipmentDef, EquipSlot, HealId, Mission, PotionId, SpellKind, TerrainDef, TerrainId, TierKey, Unit, WeaponDef, WorldLocation } from "./types";
-import musicManifest from "./music-manifest.json";
+import { TIER_KEYS } from "./types.ts";
+import type { Bag, ClassDef, ClassId, DecorationDef, DecorationPlacement, EquipmentDef, EquipSlot, HealId, Mission, PotionId, SpellKind, TerrainDef, TerrainId, TierKey, Unit, WeaponDef, WorldLocation } from "./types.ts";
+// The attribute is what Node's ESM loader needs to import JSON, and it is what lets
+// `node --test` reach anything that imports this file — the fog tests included.
+// Vite and TypeScript both accept it, so it costs nothing in the app build.
+import musicManifest from "./music-manifest.json" with { type: "json" };
+
+/**
+ * Board size limits, enforced by the editor's `resize` (see GameApp's map editor).
+ *
+ * 160 is there for full dungeon levels. It costs almost nothing to draw: the tile
+ * pass already culls per cell and the number of tiles actually on screen is set by
+ * the viewport and the zoom, not by how big the board is — a 160x160 board draws
+ * the same ~1.6k tiles at the widest zoom that a 40x40 one does. What a board this
+ * size does cost is save space, since a snapshot carries `tiles`, `tileVariants`
+ * and `tileRots` in full (see `sizeOfSnapshotTiles` in ./save).
+ *
+ * The floor is 3 because anything smaller has no room for a spawn plus a step.
+ */
+export const MIN_GRID = 3;
+export const MAX_GRID = 160;
+
+/**
+ * How far a unit sees under fog of war, in hexes, before terrain gets in the way.
+ *
+ * Sight uses the same blockers as shooting (`blocksShot`: columns, barricades,
+ * doors, void) rather than a list of its own, so what hides an enemy from a bow
+ * also hides it from the eye and there is one rule to reason about. Seven is a
+ * little past the longest weapon reach, so a fogged map still lets the party spot
+ * something before it can be hit by it.
+ */
+export const SIGHT_RADIUS = 7;
+
+/**
+ * How far a sprite lifts off its hex while standing on high ground, as a fraction of
+ * the hex width.
+ *
+ * A fraction and not a pixel count because the board draws at four zoom levels (see
+ * ZOOM_RADII in ./engine): twenty pixels reads as a real step up at the closest zoom
+ * and as nothing at the widest, whereas a fraction of the hex holds its proportion at
+ * all four.
+ *
+ * Purely presentational. The unit's grid coordinates do not move, the order sprites
+ * draw in still sorts on the logical row, and the shadow stays on the hex — the gap
+ * that opens between the feet and the shadow is the whole of the effect.
+ */
+export const HIGH_GROUND_LIFT = 0.18;
 
 export const TERRAIN: Record<TerrainId, TerrainDef> = {
   plains: { id: "plains", name: "Planície", moveCost: 1, def: 0, atk: 0, passable: true },
