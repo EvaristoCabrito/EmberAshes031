@@ -545,8 +545,33 @@ export function loadBank(): SaveBank {
   return migrated;
 }
 
-function persistBank(bank: SaveBank): void {
-  writeKey(BANK_KEY, JSON.stringify({ ...bank, version: SAVE_VERSION }));
+/**
+ * Size and outcome of the last bank write.
+ *
+ * A board carries `tiles`, `tileVariants` and `tileRots` in full inside every
+ * battle snapshot, so a bank holding a few large-board slots is the first thing
+ * that can push localStorage past its quota — roughly 200 KB of tiles alone at
+ * the 160-square ceiling (see `MAX_GRID` in ./data), against a budget that is
+ * usually about 5 MB. `setItem` throwing there was previously swallowed, which
+ * reaches the player as "the game stopped saving" with nothing to go on.
+ */
+let lastWrite: { bytes: number; ok: boolean } = { bytes: 0, ok: true };
+
+/** Whether the last bank write actually landed, and how big it was. */
+export function lastSaveWrite(): { bytes: number; ok: boolean } {
+  return lastWrite;
+}
+
+function persistBank(bank: SaveBank): boolean {
+  const payload = JSON.stringify({ ...bank, version: SAVE_VERSION });
+  const ok = writeKey(BANK_KEY, payload);
+  lastWrite = { bytes: payload.length, ok };
+  if (!ok) {
+    console.error(
+      `[save] localStorage refused ${(payload.length / 1024).toFixed(0)} KB — progress was NOT saved.`,
+    );
+  }
+  return ok;
 }
 
 export function writeBank(bank: SaveBank): SaveBank {

@@ -6,7 +6,7 @@ import { installAudioUnlock, playFile, playMenuMusic, playTheme, resumeAudio, se
 import { BattleCanvas } from "./BattleCanvas";
 import { InnScreen } from "./InnScreen";
 import { PartyInventoryOverlay, ItemTip } from "./InventoryScreens";
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, CURE_DISEASE, CURES, DECORATIONS, DOUBLE_STRIKE, doubleStrikeFormula, EQUIPMENT, EXP_TO_LEVEL, FIREBALL, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, MAGIC_MISSILE, PIERCING, piercingMul, PIERCING_THRUST, MAX_LEVEL, POTIONS, POTION_LOOT_WEIGHT, PROMOTE_LEVEL, PROMOTED_BASE, PROMOTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, TERRAIN, WEAPONS, WEAPON_MAX_ENH, WEB_OF_DREAMS, BAG_MAX, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, barricadeDecor, decorationCells, placedFootprint, decorationImage, diceFormula, emberForKill, enemyLevelFor, equippedPouchId, fireballFormula, healFormula, lightningFormula, lightningTier3Formula, dressMap, isSummonClass, MUSIC_TRACKS, SUMMON_CLASSES, parseLayout, potionLabel, potionTooltip, lockpickTooltip, pouchIcon, rangeLabel, sheetLine, spellFormula, spellTier, spellUseGains, startingBags, statsFor, terrainNote, tierKey, tierUses, weaponEnhCost, weaponSellValue, equipmentFitsSlot, MULTI_SHOT, multiShotFormula, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, STAMPEDE, stampedeFormula, type SpellTier } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveFormula, CURE_DISEASE, CURES, DECORATIONS, DOUBLE_STRIKE, doubleStrikeFormula, EQUIPMENT, EXP_TO_LEVEL, FIREBALL, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, MAGIC_MISSILE, PIERCING, piercingMul, PIERCING_THRUST, MAX_GRID, MAX_LEVEL, MIN_GRID, POTIONS, POTION_LOOT_WEIGHT, PROMOTE_LEVEL, PROMOTED_BASE, PROMOTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, TERRAIN, WEAPONS, WEAPON_MAX_ENH, WEB_OF_DREAMS, BAG_MAX, LOCKPICK_PRICE, POTION_CARRY_MAX, POTION_PRICE, barricadeDecor, decorationCells, placedFootprint, decorationImage, diceFormula, emberForKill, enemyLevelFor, equippedPouchId, fireballFormula, healFormula, lightningFormula, lightningTier3Formula, dressMap, isSummonClass, MUSIC_TRACKS, SUMMON_CLASSES, parseLayout, potionLabel, potionTooltip, lockpickTooltip, pouchIcon, rangeLabel, sheetLine, spellFormula, spellTier, spellUseGains, startingBags, statsFor, terrainNote, tierKey, tierUses, weaponEnhCost, weaponSellValue, equipmentFitsSlot, MULTI_SHOT, multiShotFormula, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, STAMPEDE, stampedeFormula, type SpellTier } from "./data";
 import { BattleEngine } from "./engine";
 import { MapPreviewCanvas, type PreviewUnitSelection } from "./MapPreviewCanvas";
 import { WorldMapScreen } from "./WorldMapScreen";
@@ -2934,8 +2934,8 @@ function MapEditorScreen({
   };
 
   const resize = (cols: number, rows: number) => {
-    cols = Math.max(3, Math.min(40, cols));
-    rows = Math.max(3, Math.min(40, rows));
+    cols = Math.max(MIN_GRID, Math.min(MAX_GRID, cols));
+    rows = Math.max(MIN_GRID, Math.min(MAX_GRID, rows));
     setDraft((d) => {
       const base = baseForDraft(d);
       const tiles: TerrainId[] = [];
@@ -3466,6 +3466,8 @@ function MapEditorScreen({
             <span className="text-muted text-xs uppercase tracking-wide">Col</span>
             <input
               type="number"
+              min={MIN_GRID}
+              max={MAX_GRID}
               className="w-16 bg-bg border border-border rounded-md px-2 py-1"
               value={draft.cols}
               onChange={(e) => resize(Number(e.target.value) || draft.cols, draft.rows)}
@@ -3475,6 +3477,8 @@ function MapEditorScreen({
             <span className="text-muted text-xs uppercase tracking-wide">Lin</span>
             <input
               type="number"
+              min={MIN_GRID}
+              max={MAX_GRID}
               className="w-16 bg-bg border border-border rounded-md px-2 py-1"
               value={draft.rows}
               onChange={(e) => resize(draft.cols, Number(e.target.value) || draft.rows)}

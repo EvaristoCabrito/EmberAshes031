@@ -2,6 +2,21 @@ import { TIER_KEYS } from "./types";
 import type { Bag, ClassDef, ClassId, DecorationDef, DecorationPlacement, EquipmentDef, EquipSlot, HealId, Mission, PotionId, SpellKind, TerrainDef, TerrainId, TierKey, Unit, WeaponDef, WorldLocation } from "./types";
 import musicManifest from "./music-manifest.json";
 
+/**
+ * Board size limits, enforced by the editor's `resize` (see GameApp's map editor).
+ *
+ * 160 is there for full dungeon levels. It costs almost nothing to draw: the tile
+ * pass already culls per cell and the number of tiles actually on screen is set by
+ * the viewport and the zoom, not by how big the board is — a 160x160 board draws
+ * the same ~1.6k tiles at the widest zoom that a 40x40 one does. What a board this
+ * size does cost is save space, since a snapshot carries `tiles`, `tileVariants`
+ * and `tileRots` in full (see `sizeOfSnapshotTiles` in ./save).
+ *
+ * The floor is 3 because anything smaller has no room for a spawn plus a step.
+ */
+export const MIN_GRID = 3;
+export const MAX_GRID = 160;
+
 export const TERRAIN: Record<TerrainId, TerrainDef> = {
   plains: { id: "plains", name: "Planície", moveCost: 1, def: 0, atk: 0, passable: true },
   woods: { id: "woods", name: "Bosque", moveCost: 2, def: 1, atk: 0, passable: true },
