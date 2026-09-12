@@ -1,5 +1,6 @@
-import { effectiveMaxRange, isProjectile, isRangedWeapon, TERRAIN } from "./data.ts";
+import { effectiveMaxRange, isProjectile, isRangedWeapon } from "./data.ts";
 import type { Point, TerrainId, Unit } from "./types.ts";
+import { EMPTY_OVERLAY, effectiveMaxRangeAt, hexDef, type DecorOverlay } from "./hexprops.ts";
 
 export function key(x: number, y: number): string {
   return `${x},${y}`;
@@ -68,13 +69,14 @@ export function clearShot(
   tiles: TerrainId[],
   cols: number,
   kind: "arrow" | "bolt",
+  overlay: DecorOverlay = EMPTY_OVERLAY,
 ): boolean {
-  const fromHigh = !!TERRAIN[tileAt(tiles, cols, from.x, from.y)].height;
+  const fromHigh = !!hexDef(tiles, cols, from.x, from.y, overlay).height;
   const line = hexLine(from, to);
   for (let i = 1; i < line.length; i++) {
     const p = line[i]!;
     const end = i === line.length - 1;
-    const t = TERRAIN[tileAt(tiles, cols, p.x, p.y)];
+    const t = hexDef(tiles, cols, p.x, p.y, overlay);
     if (t.id === "barricade") {
       if (end) return false;
       const shooterBehind = hexDist(from, p) <= 1;
@@ -314,12 +316,13 @@ function footprintCost(
   occ: Map<string, Unit>,
   self: Unit,
   stop: boolean,
+  overlay: DecorOverlay = EMPTY_OVERLAY,
 ): number | null {
   const cells = footprint({ x, y, size });
   let cost = 1;
   for (const p of cells) {
     if (!inBounds(p.x, p.y, cols, rows)) return null;
-    const terr = TERRAIN[tileAt(tiles, cols, p.x, p.y)];
+    const terr = hexDef(tiles, cols, p.x, p.y, overlay);
     if (!terr.passable) {
       if (!(terr.id === "barricade" && self.classId === "troll")) return null;
     }
@@ -348,6 +351,7 @@ export function computeReachable(
   // legitimately routes through one silently truncates at the dangling reference instead of
   // reaching its real destination.
   pruneStopPoints = true,
+  overlay: DecorOverlay = EMPTY_OVERLAY,
 ): Map<string, ReachCell> {
   const occ = occupancy(units);
   const size = unitSize(unit);
@@ -361,7 +365,7 @@ export function computeReachable(
     const cur = queue.shift()!;
     if (cur.cost >= unit.mov) continue;
     for (const n of hexNeighbors(cur.x, cur.y)) {
-      const step = footprintCost(n.x, n.y, size, tiles, cols, rows, occ, unit, false);
+      const step = footprintCost(n.x, n.y, size, tiles, cols, rows, occ, unit, false, overlay);
       if (step == null) continue;
       const nextCost = cur.cost + step;
       if (nextCost > unit.mov) continue;
@@ -377,7 +381,7 @@ export function computeReachable(
   if (!pruneStopPoints) return result;
   for (const [k, cell] of result) {
     if (k === key(unit.x, unit.y)) continue;
-    if (footprintCost(cell.x, cell.y, size, tiles, cols, rows, occ, unit, true) == null) {
+    if (footprintCost(cell.x, cell.y, size, tiles, cols, rows, occ, unit, true, overlay) == null) {
       result.delete(k);
     }
   }
@@ -392,7 +396,7 @@ export function computeReachable(
  * side of an obstacle can end up with every hex-closer cell actually a dead end, greedily
  * "closest by hexDist" then never picks a move at all (every real step reads as moving away)
  * and the enemy freezes in place turn after turn even though a real route exists. */
-export function terrainDistanceField(from: Point, tiles: TerrainId[], cols: number, rows: number): Map<string, number> {
+export function terrainDistanceField(from: Point, tiles: TerrainId[], cols: number, rows: number, overlay: DecorOverlay = EMPTY_OVERLAY): Map<string, number> {
   const dist = new Map<string, number>();
   dist.set(key(from.x, from.y), 0);
   // Bucket queue, not a sorted array. This is a whole-board Dijkstra and the old
@@ -415,7 +419,7 @@ export function terrainDistanceField(from: Point, tiles: TerrainId[], cols: numb
       if ((dist.get(key(cur.x, cur.y)) ?? Infinity) < c) continue;
       for (const n of hexNeighbors(cur.x, cur.y)) {
         if (!inBounds(n.x, n.y, cols, rows)) continue;
-        const terr = TERRAIN[tileAt(tiles, cols, n.x, n.y)];
+        const terr = hexDef(tiles, cols, n.x, n.y, overlay);
         if (!terr.passable) continue;
         const nextCost = c + terr.moveCost;
         const nk = key(n.x, n.y);
@@ -470,7 +474,7 @@ export function inWeaponRange(
   return m >= min && m <= max;
 }
 
-export function canHitFrom(unit: Unit, from: Point, foe: Unit, tiles: TerrainId[], cols: number): boolean {
+export function canHitFrom(unit: Unit, from: Point, foe: Unit, tiles: TerrainId[], cols: number, overlay: DecorOverlay = EMPTY_OVERLAY): boolean {
   const placed = { ...unit, x: from.x, y: from.y };
   const tile = tileAt(tiles, cols, from.x, from.y);
   const max = effectiveMaxRange(unit, tile);
@@ -484,7 +488,7 @@ export function canHitFrom(unit: Unit, from: Point, foe: Unit, tiles: TerrainId[
   if (!ok) return false;
   const kind = shotKind(unit);
   if (!kind) return true;
-  return clearShot(from, { x: foe.x, y: foe.y }, tiles, cols, kind);
+  return clearShot(from, { x: foe.x, y: foe.y }, tiles, cols, kind, overlay);
 }
 
 export function attackableEnemies(
@@ -493,12 +497,13 @@ export function attackableEnemies(
   units: Unit[],
   tiles: TerrainId[],
   cols: number,
+  overlay: DecorOverlay = EMPTY_OVERLAY,
 ): Map<string, Point> {
   const best = new Map<string, Point>();
   for (const cell of reach.values()) {
     for (const foe of units) {
       if (!foe.alive || foe.side === unit.side) continue;
-      if (!canHitFrom(unit, cell, foe, tiles, cols)) continue;
+      if (!canHitFrom(unit, cell, foe, tiles, cols, overlay)) continue;
       if (!best.has(foe.id)) best.set(foe.id, { x: cell.x, y: cell.y });
     }
   }
@@ -511,15 +516,16 @@ export function computeThreat(
   cols: number,
   rows: number,
   units: Unit[],
+  overlay: DecorOverlay = EMPTY_OVERLAY,
 ): Point[] {
-  const reach = computeReachable(unit, tiles, cols, rows, units);
+  const reach = computeReachable(unit, tiles, cols, rows, units, true, overlay);
   const seen = new Set<string>();
   const out: Point[] = [];
   for (const cell of reach.values()) {
-    const max = effectiveMaxRange(unit, tileAt(tiles, cols, cell.x, cell.y));
+    const max = effectiveMaxRangeAt(unit, tiles, cols, cell.x, cell.y, overlay);
     const kind = shotKind(unit);
     for (const p of attackCellsFrom(cell.x, cell.y, unit.minRange, max, cols, rows)) {
-      if (kind && !clearShot(cell, p, tiles, cols, kind)) continue;
+      if (kind && !clearShot(cell, p, tiles, cols, kind, overlay)) continue;
       const k = key(p.x, p.y);
       if (seen.has(k)) continue;
       seen.add(k);

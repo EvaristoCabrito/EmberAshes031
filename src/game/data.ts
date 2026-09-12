@@ -49,16 +49,6 @@ export const TERRAIN: Record<TerrainId, TerrainDef> = {
   deadtree: { id: "deadtree", name: "Tronco caído", moveCost: 2, def: 1, atk: 2, passable: true, height: 1 },
   /** Pure void — a building block for closed/indoor maps: apaga o terreno e nem se atravessa, nem se vê através. */
   void: { id: "void", name: "Vazio", moveCost: 99, def: 0, atk: 0, passable: false, blocksShot: true },
-  /**
-   * Tall obstacle: nobody stands on it, and it is high enough that a shooter on low
-   * ground cannot loose an arrow over it (see clearShot, which only lets `height`
-   * through for a shooter who is also high). The one terrain that is both impassable
-   * and elevated, which is what the decoration editor's two switches resolve to when
-   * both are on — every other high terrain can be stood on.
-   *
-   * Its `atk`/`def` never apply, since applying them needs an occupant.
-   */
-  crag: { id: "crag", name: "Rochedo", moveCost: 99, def: 0, atk: 0, passable: false, blocksShot: true, height: 1 },
 };
 
 // Footprint "tamanho tipo N" catalog: standard, reusable creature footprint shapes, named by
@@ -2638,7 +2628,6 @@ export function startingBags(): Record<string, Bag> {
 }
 
 const CHAR: Record<string, TerrainId> = {
-  g: "crag",
   ".": "plains",
   w: "woods",
   r: "ruins",
@@ -2684,46 +2673,7 @@ export const TILE_CHAR: Record<TerrainId, string> = {
   door: "o",
   deadtree: "t",
   void: "v",
-  crag: "g",
 };
-
-/**
- * The terrain a placed decoration's two editor switches resolve to, on top of whatever
- * is already painted or stamped under it.
- *
- * This is how the switches reach the rules: everything in the game reads movement,
- * cover and line of sight off `tiles` alone (see footprintCost, clearShot), and the
- * note on DecorationDef.tile explains why that single channel is worth keeping. So the
- * switches pick a tile rather than becoming a second place where rules live.
- *
- * Strictly additive — it never takes a property away:
- *
- *   both off        the hex is returned untouched
- *   blocked only    `column`, the solid the game already draws rocks on. Solidity is
- *                   one flag set in this engine, so a blocking prop also stops arrows
- *                   and fog; there is no impassable-but-transparent terrain to use.
- *   high only       the elevated sibling of what is under it, so a wooded hex becomes
- *                   woodland high ground rather than bare hill. The four walkable high
- *                   terrains are mechanically identical; only the name differs.
- *   both            `crag`, the tall obstacle.
- *
- * A hex that already has what a switch asks for keeps the terrain it had, which is what
- * stops "high ground" on a barricade from quietly making it walkable — it becomes a
- * crag instead, still solid and now tall. That does cost the barricade's own rules (a
- * troll can smash a barricade, not a crag), the one case where these switches replace
- * behaviour rather than add to it.
- */
-export function overrideTerrain(under: TerrainId, blocksPath: boolean, yieldsHighGround: boolean): TerrainId {
-  const t = TERRAIN[under];
-  const wantBlocked = blocksPath || !t.passable;
-  const wantHigh = yieldsHighGround || !!t.height;
-  if (wantBlocked === !t.passable && wantHigh === !!t.height) return under;
-  if (wantBlocked && wantHigh) return "crag";
-  if (wantBlocked) return "column";
-  if (under === "woods") return "highwood";
-  if (under === "ruins") return "highruin";
-  return "hill";
-}
 
 export function isRangedWeapon(unit: { maxRange: number; mag: number }): boolean {
   return unit.maxRange > 1 && unit.mag === 0;
@@ -2741,9 +2691,6 @@ export function effectiveMaxRange(unit: Pick<Unit, "maxRange" | "weaponId">, til
 
 export function terrainNote(id: TerrainId): string | undefined {
   const t = TERRAIN[id];
-  // Before the height check below: a crag is elevated but impassable, so the usual
-  // "+2 dano" note would promise a bonus nobody can ever stand there to collect.
-  if (t.id === "crag") return "rochedo · não se atravessa · alto: quem atira de baixo não passa a flecha por cima";
   if (t.height) return `${t.name} · +2 dano · arqueira +1 alcance`;
   if (t.id === "barricade") return "não se atravessa · 3 hexes · de trás você atira · quem está atrás não é acertado";
   if (t.id === "chest") return "trancado · precisa de Gazua para abrir · pode conter Ember";

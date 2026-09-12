@@ -1,4 +1,4 @@
-import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, isBossClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, overrideTerrain, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, SIGHT_RADIUS, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
+import { CAUSTIC_VENOM, CHEST_LOOT, CLASSES, CLEAVE, cleaveDoublesVs, cleaveFormula, cleavePower, CURE_DISEASE, CURES, DECORATIONS, DISEASE, DOUBLE_STRIKE, doubleStrikeFormula, doubleStrikePower, EMPTY_BAG, EQUIPMENT, EXP_TO_LEVEL, expForHit, FIREBALL, FOOTPRINT_TYPE_7, FOOTPRINT_TYPE_8, formatSpellUseGains, KILL_DROP_CHANCE, LIGHTNING, LIGHTNING_T3, LONG_SHOT, longShotFormula, longShotPower, MAGIC_MISSILE, magicMissileCount, MAX_LEVEL, PIERCING, piercingMul, PIERCING_THRUST, POTION_CARRY_MAX, POTIONS, SHOCK, SUMMON_FAMILIAR, SWEEP, TRIP, WEAPON_MAX_ENH, WEAPONS, WEB_OF_DREAMS, healFormula, barricadeDecor, decorationCells, decorationFacing, decorationImage, diceFormula, effectiveMaxRange, enemyLevelFor, equipmentIcon, fireballFormula, fireballOrigin, fireballPower, fireballRangeTiles, fireballTiles, hexAreaTiles, isProjectile, isSummonClass, isBossClass, lightningDice, lightningFormula, lightningTier3Formula, missionGearLevel, parseLayout, placedFootprint, potionLabel, rollCure, rollDice, rollPotion, shockChargesFor, spellFormula, spellTier, spellUseGains, starterWeaponFor, STARTING_BAG, statsFor, terrainNote, TERRAIN, tierKey, tierUses, gearStatBonus, offHandBlocked, equipmentFitsSlot, equipmentSlotName, equipmentTooltip, weaponTooltip, potionTooltip, weaponIcon, weaponRoll, weightedLootPick, weightedPotionPick, weightedWeaponPick, MULTI_SHOT, multiShotFormula, multiShotPower, multiShotTargets, SECOND_WIND, secondWindPct, auraPower, AURA_OF_PROTECTION, INTIMIDATING_PRESENCE, DIVINE_WRATH, divineWrathFormula, divineWrathPower, SHOULDER_SMASH, shoulderSmashFormula, shoulderSmashPower, SIGHT_RADIUS, STAMPEDE, stampedeFormula, stampedePower, cultistSpellUses, brigandSpellUses, birolhoSpellUses, webOfDreamsSize } from "./data";
 import type { SpellTier } from "./data";
 import { canCounter, makeForecast, mulberry32, powerOf, protOf, rollDamage, rollDamageCustom } from "./combat";
 import {
@@ -30,11 +30,13 @@ import {
   type ReachCell,
 } from "./pathfinding";
 import { packExplored, relight, sightReaches, unpackExplored } from "./fog";
+import { buildDecorOverlay, hexDef, type DecorOverlay } from "./hexprops";
 import { sfxPlay } from "./audio";
 import type {
   Bag,
   BattleSnapshot,
   BattleUnitSnap,
+  TerrainDef,
   ClassId,
   DecorationPlacement,
   Forecast,
@@ -710,6 +712,15 @@ export class BattleEngine {
    * cannot go stale. Footprint shape is fixed at spawn, so it needs no stamp; a
    * summon changes the array length, which the compare catches.
    */
+  /**
+   * The two per-placement decoration switches, folded to one byte per cell.
+   *
+   * Rebuilt whenever the decoration list changes rather than consulted per query: a
+   * rule asking about a hex must not walk every prop on the board to find out, and
+   * `terrainDistanceField` asks about every cell six times over. Read through
+   * `hexAt`, never directly.
+   */
+  private decorOverlay: DecorOverlay = new Uint8Array(0);
   private occCache: Map<string, Unit> | null = null;
   private occStamp: number[] = [];
   /**
@@ -880,21 +891,8 @@ export class BattleEngine {
         if (x >= 0 && x < this.cols && y >= 0 && y < this.rows) this.tiles[y * this.cols + x] = def.tile;
       }
     }
-    // Then the per-placement switches, on top of whatever the definition just laid, so
-    // an author can make one cart solid without making every cart solid. Additive only:
-    // a placement with both switches off leaves the hex exactly as the pass above left
-    // it (see DecorationPlacement.blocksPath).
-    for (const p of this.decorations) {
-      if (!p.blocksPath && !p.yieldsHighGround) continue;
-      for (const { dx, dy } of placedFootprint(p)) {
-        const x = p.x + dx;
-        const y = p.y + dy;
-        if (x < 0 || x >= this.cols || y < 0 || y >= this.rows) continue;
-        const i = y * this.cols + x;
-        this.tiles[i] = overrideTerrain(this.tiles[i] ?? "plains", !!p.blocksPath, !!p.yieldsHighGround);
-      }
-    }
     this.decorations.push(...barricadeDecor(this.tiles, this.cols, this.rows, this.decorations));
+    this.refreshDecorOverlay();
     this.rng = mulberry32(seed + mission.index * 97);
     this.units = [
       ...mission.playerSpawns.map((s, i) => spawnUnit(s, "player", i, roster)),
@@ -962,7 +960,7 @@ export class BattleEngine {
     const hoverUnit = hoverCell
       ? this.units.find((u) => u.alive && occupies(u, hoverCell.x, hoverCell.y))
       : undefined;
-    const terr = hoverCell ? TERRAIN[tileAt(this.tiles, this.cols, hoverCell.x, hoverCell.y)] : null;
+    const terr = hoverCell ? this.hexAt(hoverCell.x, hoverCell.y) : null;
     const inspected = this.units.find((u) => u.id === this.inspectedId) ?? null;
     const pendingFoe = this.units.find((u) => u.id === this.pendingFoeId) ?? null;
     // A foe out of sight gets no damage forecast either — the HUD must not leak what
@@ -987,7 +985,7 @@ export class BattleEngine {
       !!selected &&
       !selected.acted &&
       (this.attackFrom.size > 0 ||
-        this.units.some((u) => u.alive && u.side !== selected.side && canHitFrom(selected, selected, u, this.tiles, this.cols)));
+        this.units.some((u) => u.alive && u.side !== selected.side && canHitFrom(selected, selected, u, this.tiles, this.cols, this.decorOverlay)));
     const canLockpick = !!selected && !selected.acted && selected.bag.lockpick > 0 && !!this.adjacentLock(selected);
     const offHandKind: "weapon" | "shield" | null =
       selected && !selected.acted && selected.offHandId ? (EQUIPMENT[selected.offHandId]?.kind ?? null) : null;
@@ -1237,6 +1235,7 @@ export class BattleEngine {
       this.terrainVersion++;
     }
     this.decorations.splice(0, this.decorations.length, ...snap.decorations.map((d) => ({ ...d })));
+    this.refreshDecorOverlay();
     this.units = snap.units.map(unitFromSnap);
     this.invalidateOcc();
     this.turn = snap.turn;
@@ -1745,8 +1744,8 @@ export class BattleEngine {
    * the defender's RES with it, making armoured targets hardest for the spells meant to
    * break them. */
   private spellDamage(att: Unit, foe: Unit, mul: number, roll: number): number {
-    const attTile = TERRAIN[tileAt(this.tiles, this.cols, att.x, att.y)];
-    const defTile = TERRAIN[tileAt(this.tiles, this.cols, foe.x, foe.y)];
+    const attTile = this.hexAt(att.x, att.y);
+    const defTile = this.hexAt(foe.x, foe.y);
     const prot = protOf(att, foe);
     const spell = Math.floor(powerOf(att) * mul) + roll + attTile.atk - prot - (defTile.cover ?? 0);
     const plain = powerOf(att) + weaponRoll(att.weaponId, att.weaponEnh, this.rng) + attTile.atk - prot - defTile.def;
@@ -1775,7 +1774,7 @@ export class BattleEngine {
       for (const id of a.ids) {
         const foe = this.units.find((u) => u.id === id && u.alive);
         if (!foe) continue;
-        const defTile = TERRAIN[tileAt(this.tiles, this.cols, foe.x, foe.y)];
+        const defTile = this.hexAt(foe.x, foe.y);
         if (defTile.id === "barricade") {
           this.emitParticle({
             x: foe.drawX,
@@ -2130,7 +2129,7 @@ export class BattleEngine {
     this.selectedId = u.id;
     this.orig = { x: u.x, y: u.y };
     this.origMoveBudgetUsed = u.moveBudgetUsed;
-    this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
+    this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
     this.mode = "selected";
   }
 
@@ -2183,7 +2182,10 @@ export class BattleEngine {
         // that is now walkable.
         for (let d = this.decorations.length - 1; d >= 0; d--) {
           const dec = this.decorations[d];
-          if ((dec.id === "barricade" || dec.id === "barricade-2") && dec.x === c.x && dec.y === c.y) this.decorations.splice(d, 1);
+          if ((dec.id === "barricade" || dec.id === "barricade-2") && dec.x === c.x && dec.y === c.y) {
+            this.decorations.splice(d, 1);
+            this.refreshDecorOverlay();
+          }
         }
         n += 1;
         this.emitParticle({
@@ -2208,7 +2210,7 @@ export class BattleEngine {
   }
 
   private nudgeOffHazard(unit: Unit): void {
-    const here = TERRAIN[tileAt(this.tiles, this.cols, unit.x, unit.y)];
+    const here = this.hexAt(unit.x, unit.y);
     if (here.passable) return;
     const occ = this.occ();
     const seen = new Set<string>([key(unit.x, unit.y)]);
@@ -2220,7 +2222,7 @@ export class BattleEngine {
         const k = key(n.x, n.y);
         if (seen.has(k)) continue;
         seen.add(k);
-        const terr = TERRAIN[tileAt(this.tiles, this.cols, n.x, n.y)];
+        const terr = this.hexAt(n.x, n.y);
         const who = occ.get(k);
         if (terr.passable && (!who || who.id === unit.id)) {
           unit.x = n.x;
@@ -2296,7 +2298,7 @@ export class BattleEngine {
   }
 
   private applyTileHazard(unit: Unit, cell: Point): void {
-    const terr = TERRAIN[tileAt(this.tiles, this.cols, cell.x, cell.y)];
+    const terr = this.hexAt(cell.x, cell.y);
     if (!terr.hazardDice || !unit.alive) return;
     const faces = terr.hazardFaces ?? 8;
     let dmg = 0;
@@ -2706,7 +2708,7 @@ export class BattleEngine {
     this.inspectedId = null;
     this.orig = { x: unit.x, y: unit.y };
     this.origMoveBudgetUsed = unit.moveBudgetUsed;
-    this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units);
+    this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
     this.attackFrom = unit.acted ? new Map() : this.visibleAttackTargets(unit);
     this.threat = [];
     this.mode = "selected";
@@ -2717,9 +2719,9 @@ export class BattleEngine {
 
   private inspect(unit: Unit): void {
     this.inspectedId = unit.id;
-    this.threat = computeThreat(unit, this.tiles, this.cols, this.rows, this.units);
+    this.threat = computeThreat(unit, this.tiles, this.cols, this.rows, this.units, this.decorOverlay);
     const max = effectiveMaxRange(unit, tileAt(this.tiles, this.cols, unit.x, unit.y));
-    const tile = TERRAIN[tileAt(this.tiles, this.cols, unit.x, unit.y)];
+    const tile = this.hexAt(unit.x, unit.y);
     this.tip = `${unit.name} · HP ${unit.hp}/${unit.maxHp} · Alc ${unit.minRange === max ? max : `${unit.minRange}–${max}`}${
       tile.height ? " · alto +2" : ""
     }${tile.id === "barricade" ? " · barricada bloqueia projéteis" : ""}${
@@ -2773,7 +2775,7 @@ export class BattleEngine {
     this.threat = [];
     this.selectedId = u.id;
     this.mode = "selected";
-    this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
+    this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
     this.attackFrom = this.visibleAttackTargets(u);
     this.ensureVisible(u.x, u.y);
     this.centerOn(u.x, u.y);
@@ -3276,7 +3278,7 @@ export class BattleEngine {
 
   private longMax(u: Unit): number {
     const ranged = u.weaponId ? !!WEAPONS[u.weaponId]?.ranged : false;
-    const extra = ranged && TERRAIN[tileAt(this.tiles, this.cols, u.x, u.y)].height ? 1 : 0;
+    const extra = ranged && this.hexAt(u.x, u.y).height ? 1 : 0;
     return u.maxRange * LONG_SHOT.rangeMul + LONG_SHOT.rangeBonus + extra;
   }
 
@@ -3390,7 +3392,7 @@ export class BattleEngine {
    */
   private visibleAttackTargets(unit: Unit): Map<string, Point> {
     const reach = this.reach;
-    const all = attackableEnemies(unit, reach, this.units, this.tiles, this.cols);
+    const all = attackableEnemies(unit, reach, this.units, this.tiles, this.cols, this.decorOverlay);
     if (!this.fogged) return all;
     for (const id of [...all.keys()]) {
       const foe = this.units.find((u) => u.id === id);
@@ -3431,7 +3433,7 @@ export class BattleEngine {
       if (u.side !== "player" || !u.alive) continue;
       eyes.push(...footprint(u));
     }
-    relight(this.vis, eyes, SIGHT_RADIUS, this.tiles, this.cols, this.rows);
+    relight(this.vis, eyes, SIGHT_RADIUS, this.tiles, this.cols, this.rows, this.decorOverlay);
   }
 
   /**
@@ -3456,7 +3458,7 @@ export class BattleEngine {
     for (const p of this.units) {
       if (p.side !== "player" || !p.alive) continue;
       if (hexDist(foe, p) > SIGHT_RADIUS) continue;
-      if (!sightReaches(foe, p, this.tiles, this.cols)) continue;
+      if (!sightReaches(foe, p, this.tiles, this.cols, this.decorOverlay)) continue;
       this.awake.add(foe.id);
       return true;
     }
@@ -3475,6 +3477,21 @@ export class BattleEngine {
     const cells = this.cols * this.rows;
     this.visStamp = "";
     this.vis = (this.fogged && encoded ? unpackExplored(encoded, cells) : null) ?? new Uint8Array(cells);
+  }
+
+  /**
+   * The consolidated properties of one hex: painted terrain with the decoration layer
+   * folded in. Every rule in this class goes through here instead of reading `TERRAIN`
+   * off `tiles` directly, which is what lets a placement's switches change movement,
+   * sight and the high-ground bonus without the board itself being rewritten.
+   */
+  private hexAt(x: number, y: number): TerrainDef {
+    return hexDef(this.tiles, this.cols, x, y, this.decorOverlay);
+  }
+
+  /** Refold the decoration switches. Call after anything adds or removes a prop. */
+  private refreshDecorOverlay(): void {
+    this.decorOverlay = buildDecorOverlay(this.decorations, this.cols, this.rows, placedFootprint);
   }
 
   /** Who stands where, rebuilt only when the layout actually moved. See `occCache`. */
@@ -3527,7 +3544,7 @@ export class BattleEngine {
     return players.map((p) => {
       let field = this.fieldCache.get(p.id);
       if (!field) {
-        field = terrainDistanceField(p, this.tiles, this.cols, this.rows);
+        field = terrainDistanceField(p, this.tiles, this.cols, this.rows, this.decorOverlay);
         this.fieldCache.set(p.id, field);
       }
       return { p, field };
@@ -3538,17 +3555,17 @@ export class BattleEngine {
     if (!this.spellKind) return false;
     if (this.spellKind === "fireball") {
       if (manhattan(caster, cell) > FIREBALL.range) return false;
-      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt");
+      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt", this.decorOverlay);
     }
     if (this.spellKind === "causticVenom") {
       if (manhattan(caster, cell) > CAUSTIC_VENOM.range) return false;
-      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt");
+      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt", this.decorOverlay);
     }
     if (this.spellKind === "longShot") {
       const d = manhattan(caster, cell);
       const here = this.occ().get(key(cell.x, cell.y));
       if (!this.targetable(here) || d < caster.minRange || d > this.longMax(caster)) return false;
-      return clearShot(caster, cell, this.tiles, this.cols, "arrow");
+      return clearShot(caster, cell, this.tiles, this.cols, "arrow", this.decorOverlay);
     }
     if (this.spellKind === "piercing") return this.piercingRay(caster, cell) !== null;
     if (this.spellKind === "piercingThrust") return this.piercingThrustRay(caster, cell) !== null;
@@ -3573,21 +3590,21 @@ export class BattleEngine {
     if (this.spellKind === "magicMissile") {
       const here = this.occ().get(key(cell.x, cell.y));
       if (!this.targetable(here) || manhattan(caster, cell) > MAGIC_MISSILE.range) return false;
-      return clearShot(caster, cell, this.tiles, this.cols, "bolt");
+      return clearShot(caster, cell, this.tiles, this.cols, "bolt", this.decorOverlay);
     }
     if (this.spellKind === "summonFamiliar") {
       if (manhattan(caster, cell) > SUMMON_FAMILIAR.range) return false;
       if (!inBounds(cell.x, cell.y, this.cols, this.rows)) return false;
-      if (!TERRAIN[tileAt(this.tiles, this.cols, cell.x, cell.y)].passable) return false;
+      if (!this.hexAt(cell.x, cell.y).passable) return false;
       return !this.occ().get(key(cell.x, cell.y));
     }
     if (this.spellKind === "webOfDreams") {
       if (manhattan(caster, cell) > WEB_OF_DREAMS.range) return false;
-      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt");
+      return clearShot(caster, fireballOrigin(cell, this.cols, this.rows), this.tiles, this.cols, "bolt", this.decorOverlay);
     }
     if (this.spellKind === "doubleStrike" || this.spellKind === "trip") {
       const here = this.occ().get(key(cell.x, cell.y));
-      return !!here && here.alive && here.side !== caster.side && canHitFrom(caster, caster, here, this.tiles, this.cols);
+      return !!here && here.alive && here.side !== caster.side && canHitFrom(caster, caster, here, this.tiles, this.cols, this.decorOverlay);
     }
     if (this.spellKind === "cleave" || this.spellKind === "shoulderSmash") {
       return hexNeighbors(caster.x, caster.y).some((p) => p.x === cell.x && p.y === cell.y);
@@ -3596,7 +3613,7 @@ export class BattleEngine {
       const d = manhattan(caster, cell);
       const here = this.occ().get(key(cell.x, cell.y));
       if (!this.targetable(here) || d < caster.minRange || d > caster.maxRange + MULTI_SHOT.rangeBonus) return false;
-      return clearShot(caster, cell, this.tiles, this.cols, "arrow");
+      return clearShot(caster, cell, this.tiles, this.cols, "arrow", this.decorOverlay);
     }
     if (this.spellKind === "divineWrath") return this.wrathRay(caster, cell, DIVINE_WRATH.range) !== null;
     if (this.spellKind === "stampede") return this.wrathRay(caster, cell, STAMPEDE.range) !== null;
@@ -3617,10 +3634,10 @@ export class BattleEngine {
   private piercingRay(from: Point, through: Point): Point[] | null {
     const raw = piercingLine(from, through, this.cols, this.rows);
     if (!raw) return null;
-    const fromHigh = !!TERRAIN[tileAt(this.tiles, this.cols, from.x, from.y)].height;
+    const fromHigh = !!this.hexAt(from.x, from.y).height;
     const out: Point[] = [];
     for (const p of raw) {
-      const t = TERRAIN[tileAt(this.tiles, this.cols, p.x, p.y)];
+      const t = this.hexAt(p.x, p.y);
       if (t.id === "barricade" || t.blocksShot) break;
       if (t.height && !fromHigh) break;
       out.push(p);
@@ -3655,7 +3672,7 @@ export class BattleEngine {
       }
     }
     if (!dest) return;
-    if (!TERRAIN[tileAt(this.tiles, this.cols, dest.x, dest.y)].passable) return;
+    if (!this.hexAt(dest.x, dest.y).passable) return;
     if (this.units.some((u) => u.alive && occupies(u, dest.x, dest.y))) return;
     foe.x = dest.x;
     foe.y = dest.y;
@@ -4599,7 +4616,10 @@ export class BattleEngine {
     // decoration in place rather than rebinding the field.
     for (let d = this.decorations.length - 1; d >= 0; d--) {
       const dec = this.decorations[d];
-      if (dec.id === "locked-chest" && dec.x === target.x && dec.y === target.y) this.decorations.splice(d, 1);
+      if (dec.id === "locked-chest" && dec.x === target.x && dec.y === target.y) {
+        this.decorations.splice(d, 1);
+        this.refreshDecorOverlay();
+      }
     }
     u.bag.lockpick -= 1;
     u.x = Math.round(u.drawX);
@@ -4744,7 +4764,7 @@ export class BattleEngine {
       this.origMoveBudgetUsed = u.moveBudgetUsed;
       this.turnStart = { x: u.x, y: u.y };
       this.moveSpoiled = resumed;
-      this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units);
+      this.reach = computeReachable(this.effectiveUnitForReach(u), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
       this.attackFrom = u.acted ? new Map() : this.visibleAttackTargets(u);
       this.threat = [];
       this.mode = "selected";
@@ -4831,7 +4851,7 @@ export class BattleEngine {
       return;
     }
     this.smashBarricades(next);
-    const reach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units);
+    const reach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
     // Every move this function queues has to be reconstructed off this unpruned pass, not
     // `reach` above — same reasoning as commitMove's walkReach: `reach` deletes any cell along
     // the way that isn't itself a legal place to stop (an ally standing there, or — the one
@@ -4842,7 +4862,7 @@ export class BattleEngine {
     // (Golem, Birolho, Horror, Asherah, Troll) has one on almost every route, which is why
     // only they ever looked "stuck" — the AI had already picked a real, reachable destination,
     // it just never got a real path to it.
-    const walkReach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units, false);
+    const walkReach = computeReachable(this.effectiveUnitForReach(next), this.tiles, this.cols, this.rows, this.units, false, this.decorOverlay);
     const players = this.units.filter((u) => u.side === "player" && u.alive);
 
     // Cultist ("Feiticeiro") — Relâmpago outranks Choque outranks Magic Missile. Choque
@@ -4885,7 +4905,7 @@ export class BattleEngine {
         for (const cell of reach.values()) {
           for (const foe of players) {
             if (manhattan(cell, foe) > MAGIC_MISSILE.range) continue;
-            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
+            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt", this.decorOverlay)) continue;
             const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
             if (!bestSpell || score > bestSpell.score) bestSpell = { foe, from: { x: cell.x, y: cell.y }, score };
           }
@@ -4951,7 +4971,7 @@ export class BattleEngine {
         for (const cell of reach.values()) {
           for (const foe of players) {
             if (manhattan(cell, foe) > CAUSTIC_VENOM.range) continue;
-            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
+            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt", this.decorOverlay)) continue;
             const splash = hexAreaTiles({ x: foe.x, y: foe.y }, CAUSTIC_VENOM.size, this.cols, this.rows);
             let hits = 0;
             let score = 0;
@@ -5006,7 +5026,7 @@ export class BattleEngine {
         for (const cell of reach.values()) {
           for (const foe of players) {
             if (manhattan(cell, foe) > MAGIC_MISSILE.range) continue;
-            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt")) continue;
+            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "bolt", this.decorOverlay)) continue;
             const score = (foe.maxHp - foe.hp) * 3 + (foe.hp <= 8 ? 20 : 0);
             if (!bestBolt || score > bestBolt.score) bestBolt = { foe, from: { x: cell.x, y: cell.y }, score };
           }
@@ -5060,7 +5080,7 @@ export class BattleEngine {
           if (spellKind === "longShot") {
             const d = manhattan(cell, foe);
             if (d < next.minRange || d > longMax) continue;
-            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "arrow")) continue;
+            if (!clearShot(cell, { x: foe.x, y: foe.y }, this.tiles, this.cols, "arrow", this.decorOverlay)) continue;
           } else {
             const line = this.piercingRay({ x: cell.x, y: cell.y }, { x: foe.x, y: foe.y });
             if (!line || !line.some((p) => p.x === foe.x && p.y === foe.y)) continue;
@@ -5104,8 +5124,8 @@ export class BattleEngine {
     let best: { foe: Unit; from: Point; score: number } | null = null;
     for (const cell of reach.values()) {
       for (const foe of players) {
-        if (!canHitFrom(next, cell, foe, this.tiles, this.cols)) continue;
-        const terr = TERRAIN[tileAt(this.tiles, this.cols, cell.x, cell.y)];
+        if (!canHitFrom(next, cell, foe, this.tiles, this.cols, this.decorOverlay)) continue;
+        const terr = this.hexAt(cell.x, cell.y);
         const score = (foe.maxHp - foe.hp) * 3 + terr.def * 2 + (foe.hp <= 8 ? 20 : 0);
         if (!best || score > best.score) best = { foe, from: { x: cell.x, y: cell.y }, score };
       }
@@ -5248,7 +5268,7 @@ export class BattleEngine {
     }
     if (this.targetable(here)) {
       if (selected && !selected.acted && this.mode === "awaitOffHand") {
-        if (canHitFrom(selected, selected, here, this.tiles, this.cols)) {
+        if (canHitFrom(selected, selected, here, this.tiles, this.cols, this.decorOverlay)) {
           this.commitOffHandAction(selected, here, { x: selected.x, y: selected.y });
           return;
         }
@@ -5264,19 +5284,19 @@ export class BattleEngine {
             this.commitMove(selected, from, () => {
               const u = this.units.find((x) => x.id === selected.id);
               const f = this.units.find((x) => x.id === here.id);
-              if (u && f && u.alive && f.alive && canHitFrom(u, u, f, this.tiles, this.cols)) {
+              if (u && f && u.alive && f.alive && canHitFrom(u, u, f, this.tiles, this.cols, this.decorOverlay)) {
                 this.commitAttack(u, f, { x: u.x, y: u.y });
               }
             });
             return;
           }
         }
-        if (canHitFrom(selected, selected, here, this.tiles, this.cols)) {
+        if (canHitFrom(selected, selected, here, this.tiles, this.cols, this.decorOverlay)) {
           this.commitAttack(selected, here, { x: selected.x, y: selected.y });
           return;
         }
         if (shotKind(selected) && inWeaponRange(selected.x, selected.y, here.x, here.y, selected.minRange, effectiveMaxRange(selected, tileAt(this.tiles, this.cols, selected.x, selected.y)))) {
-          this.tip = TERRAIN[tileAt(this.tiles, this.cols, here.x, here.y)].id === "barricade"
+          this.tip = this.hexAt(here.x, here.y).id === "barricade"
             ? "Barricada bloqueia o projétil."
             : "O terreno alto corta a flecha.";
           sfxPlay.ui();
@@ -5356,7 +5376,7 @@ export class BattleEngine {
       // either use a skill (see the u.acted branch above, unchanged) or end the turn.
       this.selectedId = unit.id;
       this.mode = "selected";
-      this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units);
+      this.reach = computeReachable(this.effectiveUnitForReach(unit), this.tiles, this.cols, this.rows, this.units, true, this.decorOverlay);
       this.attackFrom = this.visibleAttackTargets(unit);
       after?.();
     };
@@ -5364,7 +5384,7 @@ export class BattleEngine {
 
   private commitAttack(unit: Unit, foe: Unit, from: Point): void {
     const at = { x: Math.round(from.x), y: Math.round(from.y) };
-    if (!canHitFrom(unit, at, foe, this.tiles, this.cols)) {
+    if (!canHitFrom(unit, at, foe, this.tiles, this.cols, this.decorOverlay)) {
       this.mode = "awaitAction";
       this.tip = "Fora de alcance.";
       return;
@@ -5382,7 +5402,7 @@ export class BattleEngine {
    * "already in range from here" check as a normal Atacar; no move-then-act chaining. */
   private commitOffHandAction(unit: Unit, foe: Unit, from: Point): void {
     const item = unit.offHandId ? EQUIPMENT[unit.offHandId] : null;
-    if (!item || !canHitFrom(unit, from, foe, this.tiles, this.cols)) {
+    if (!item || !canHitFrom(unit, from, foe, this.tiles, this.cols, this.decorOverlay)) {
       this.mode = "awaitAction";
       this.tip = "Fora de alcance.";
       return;
@@ -6272,7 +6292,7 @@ export class BattleEngine {
       for (const foe of this.units) {
         if (!foe.alive || foe.side === "player") continue;
         if (this.mode === "selected" && this.attackFrom.has(foe.id)) atkTiles.push(...footprint(foe));
-        if ((this.mode === "awaitAttack" || this.mode === "awaitAction") && selected && canHitFrom(selected, selected, foe, this.tiles, this.cols)) {
+        if ((this.mode === "awaitAttack" || this.mode === "awaitAction") && selected && canHitFrom(selected, selected, foe, this.tiles, this.cols, this.decorOverlay)) {
           atkTiles.push(...footprint(foe));
         }
       }

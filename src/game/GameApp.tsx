@@ -2274,7 +2274,6 @@ const TERRAIN_SWATCH: Record<TerrainId, string> = {
   door: "#4a3524",
   deadtree: "#4a3f2a",
   void: "#050505",
-  crag: "#55524d",
 };
 
 const BUILDER_TERRAIN: TerrainId[] = [
@@ -2296,10 +2295,6 @@ const BUILDER_TERRAIN: TerrainId[] = [
   "chest",
   "door",
   "void",
-  // "crag" is deliberately not here either: it is what a decoration's two rule switches
-  // resolve to when both are on (see overrideTerrain), not something to paint by hand. A
-  // map that already has one keeps it — TILE_CHAR round-trips it — but authoring goes one
-  // way, through the prop.
 ];
 
 const VARIANT_LABEL: Partial<Record<TerrainId, string[]>> = {

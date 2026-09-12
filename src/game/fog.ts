@@ -11,8 +11,8 @@
  * Only EXPLORED survives a save (see packExplored). VISIBLE is not stored because it
  * follows from where the party stands, so a load recomputes it.
  */
-import { TERRAIN } from "./data.ts";
-import { hexDist, hexLine, tileAt } from "./pathfinding.ts";
+import { hexDist, hexLine } from "./pathfinding.ts";
+import { EMPTY_OVERLAY, hexDef, type DecorOverlay } from "./hexprops.ts";
 import type { Point, TerrainId } from "./types.ts";
 
 export const UNSEEN = 0;
@@ -28,11 +28,19 @@ export const VISIBLE = 2;
  * stamps blocking terrain under itself when the board loads, so the tile grid is the
  * single source of truth for both.
  */
-export function sightReaches(from: Point, to: Point, tiles: TerrainId[], cols: number): boolean {
+export function sightReaches(
+  from: Point,
+  to: Point,
+  tiles: TerrainId[],
+  cols: number,
+  overlay: DecorOverlay = EMPTY_OVERLAY,
+): boolean {
   const line = hexLine(from, to);
   for (let i = 1; i < line.length - 1; i++) {
     const p = line[i]!;
-    if (TERRAIN[tileAt(tiles, cols, p.x, p.y)].blocksShot) return false;
+    // Consolidated, so a prop whose `blocksPath` switch is on casts a shadow the same
+    // way a painted column does — see hexDef.
+    if (hexDef(tiles, cols, p.x, p.y, overlay).blocksShot) return false;
   }
   return true;
 }
@@ -55,6 +63,7 @@ export function relight(
   tiles: TerrainId[],
   cols: number,
   rows: number,
+  overlay: DecorOverlay = EMPTY_OVERLAY,
 ): void {
   for (let i = 0; i < vis.length; i++) if (vis[i] === VISIBLE) vis[i] = EXPLORED;
   for (const eye of eyes) {
@@ -67,7 +76,7 @@ export function relight(
         const i = y * cols + x;
         if (vis[i] === VISIBLE) continue;
         if (hexDist(eye, { x, y }) > radius) continue;
-        if (sightReaches(eye, { x, y }, tiles, cols)) vis[i] = VISIBLE;
+        if (sightReaches(eye, { x, y }, tiles, cols, overlay)) vis[i] = VISIBLE;
       }
     }
   }
